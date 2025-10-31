@@ -70,8 +70,14 @@ class Agent():
         )
     
     def _load_model(self):
-        from maddpg import MADDPGActor as MARLActor
-        from maddpg import MADDPGConfig as MARLConfig
+        if self.model_name == 'maddpg':
+            from maddpg import MADDPGActor as MARLActor
+            from maddpg import MADDPGConfig as MARLConfig
+        elif self.model_name == 'mappo':
+            from mappo import MAPPOActor as MARLActor
+            from mappo import MAPPOConfig as MARLConfig
+        else:
+            raise Exception("MARL algorithm not found.")
         
         # Create config 
         if "config" in self.checkpoint:
