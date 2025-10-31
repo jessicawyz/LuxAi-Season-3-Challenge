@@ -7,9 +7,7 @@
     git clone https://github.com/Lux-AI-Challenge/Lux-Design-S3.git
     pip install -e Lux-Design-S3/src
     pip install nvidia-ml-py psutil 
-    
-    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
-    pip install pettingzoo tensorboard
+    pip install -U jax[cuda12] jaxlib
 
 Test:
 

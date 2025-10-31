@@ -27,7 +27,7 @@ class LuxFeaturizer:
     ) -> Dict[str, torch.Tensor]:
         """
         Convert observation dict to tensor features.
-            
+    
         Returns:
             - spatial_features: (C, H, W) spatial map features
             - unit_features: (max_units, F) per-unit features
@@ -63,29 +63,29 @@ class LuxFeaturizer:
         11-16: Enemy unit energy levels (binned)
         17: Distance to nearest relic node
         18: Relic node presence
-        19: Relic nodes collected by friendly team
-        20: Relic nodes collected by enemy team
+        19: Relic nodes in range (visible now)
+        20: Relic nodes out of range (remembered but not visible)
         """
         H, W = self.map_height, self.map_width
         channels = []
         
-        # Channel 0
+        # Channel 0: Energy field
         energy = np.array(obs["map_features"]["energy"], dtype=np.float32)
-        energy = np.where(energy == -1, 0, energy)  # Handle unobserved tiles
-        energy = np.clip(energy / 20.0, -1.0, 1.0)  # Normalize assuming max=20
+        energy = np.where(energy == -1, 0, energy)  
+        energy = np.clip(energy / 20.0, -1.0, 1.0)  
         channels.append(energy)
         
-        # Channel 1
+        # Channel 1: Tile type
         tile_type = np.array(obs["map_features"]["tile_type"], dtype=np.float32)
-        tile_type = np.where(tile_type == -1, 0, tile_type)  # Handle unobserved
-        tile_type = tile_type / 2.0  # Normalize to [0, 1]
+        tile_type = np.where(tile_type == -1, 0, tile_type) 
+        tile_type = tile_type / 2.0 
         channels.append(tile_type)
         
-        # Channel 2
+        # Channel 2: Sensor mask
         sensor_mask = np.array(obs["sensor_mask"], dtype=np.float32)
         channels.append(sensor_mask)
         
-        # Channels 3-4
+        # Channels 3-4: Unit density maps
         friendly_density = np.zeros((H, W), dtype=np.float32)
         enemy_density = np.zeros((H, W), dtype=np.float32)
         
@@ -102,11 +102,11 @@ class LuxFeaturizer:
                         else:
                             enemy_density[x, y] += 1
         
-        channels.append(friendly_density / self.max_units)  # normalize
+        channels.append(friendly_density / self.max_units) 
         channels.append(enemy_density / self.max_units)
         
-        # Channels 5-10
-        # Channels 11-16
+        # Channels 5-10: Friendly unit energy levels
+        # Channels 11-16: Enemy unit energy levels
         energy_bins = [0, 50, 100, 150, 200, 300, 400]
         for t in range(self.num_teams):
             for bin_idx in range(len(energy_bins) - 1):
@@ -125,7 +125,7 @@ class LuxFeaturizer:
                 
                 channels.append(bin_map / self.max_units)
         
-        # Channel 17
+        # Channel 17: Distance to nearest relic node 
         relic_positions = np.array(obs["relic_nodes"])
         relic_mask = np.array(obs["relic_nodes_mask"])
         distance_map = np.ones((H, W), dtype=np.float32) * np.sqrt(H**2 + W**2)
@@ -139,10 +139,10 @@ class LuxFeaturizer:
                     dist = np.sqrt((x_grid - rx) ** 2 + (y_grid - ry) ** 2)
                     distance_map = np.minimum(distance_map, dist.T)
         
-        distance_map = distance_map / np.sqrt(H**2 + W**2)  # normalize
+        distance_map = distance_map / np.sqrt(H**2 + W**2)  
         channels.append(distance_map)
         
-        # Channel 18
+        # Channel 18: Relic node presence
         relic_map = np.zeros((H, W), dtype=np.float32)
         for i in range(self.max_relic_nodes):
             if relic_mask[i]:
@@ -151,46 +151,36 @@ class LuxFeaturizer:
                     relic_map[rx, ry] = 1.0
         channels.append(relic_map)
         
-        # Channel 19
-        friendly_relic_memory = np.zeros((H, W), dtype=np.float32)
-        if "relic_nodes_collected" in obs and team_id in obs["relic_nodes_collected"]:
-            collected_positions = obs["relic_nodes_collected"][team_id]
-            for pos in collected_positions:
-                if len(pos) == 2:
-                    rx, ry = pos
-                    if rx >= 0 and ry >= 0 and rx < W and ry < H:
-                        friendly_relic_memory[rx, ry] = 1.0
-        channels.append(friendly_relic_memory)
+        # Channel 19: Relics visible in sensor range
+        visible_relic_map = np.zeros((H, W), dtype=np.float32)
+        for i in range(self.max_relic_nodes):
+            if relic_mask[i]:
+                rx, ry = relic_positions[i]
+                if rx >= 0 and ry >= 0 and rx < W and ry < H:
+                    # Check if this relic is in sensor range
+                    if sensor_mask[rx, ry]:
+                        visible_relic_map[rx, ry] = 1.0
+        channels.append(visible_relic_map)
         
-        # Channel 20
-        enemy_relic_memory = np.zeros((H, W), dtype=np.float32)
-        enemy_team_id = 1 - team_id
-        if "relic_nodes_collected" in obs and enemy_team_id in obs["relic_nodes_collected"]:
-            collected_positions = obs["relic_nodes_collected"][enemy_team_id]
-            for pos in collected_positions:
-                if len(pos) == 2:
-                    rx, ry = pos
-                    if rx >= 0 and ry >= 0 and rx < W and ry < H:
-                        enemy_relic_memory[rx, ry] = 1.0
-        channels.append(enemy_relic_memory)
+        # Channel 20: Relics known but not currently visible
+        hidden_relic_map = np.maximum(0, relic_map - visible_relic_map)
+        channels.append(hidden_relic_map)
         
-        # Stack all channels
+        # Stack all channels: (C, H, W)
         spatial_features = np.stack(channels, axis=0)
         
         return spatial_features
     
     def _extract_unit_features(self, obs: Dict, team_id: int) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Extract per-unit features.
-        
-        Features per unit:
-        0-1: Position (x, y) 
-        2: Energy 
-        3: Is valid unit
-        4-5: Distance to nearest enemy 
-        6-7: Distance to nearest relic 
-        8: Team ID 
-        9: Unit ID 
+        Extract per-unit features
+        - Position (x, y)
+        - Energy
+        - Is valid unit
+        - Distance to nearest enemy
+        - Distance to nearest relic
+        - Team ID 
+        - Unit ID
         """
         unit_features = np.zeros((self.max_units, 10), dtype=np.float32)
         unit_mask = np.zeros(self.max_units, dtype=bool)
@@ -216,11 +206,11 @@ class LuxFeaturizer:
                 x, y = positions[i]
                 energy = energies[i]
                 
-                # Position normalized
+                # Position
                 unit_features[i, 0] = x / self.map_width
                 unit_features[i, 1] = y / self.map_height
                 
-                # Energy normalized
+                # Energy
                 unit_features[i, 2] = np.clip(energy / 400.0, -0.5, 1.0)
                 
                 # Valid flag
@@ -235,7 +225,7 @@ class LuxFeaturizer:
                     min_dist = np.min(distances)
                     unit_features[i, 4] = min_dist / np.sqrt(self.map_width**2 + self.map_height**2)
                     
-                    # Direction to nearest enemy (as normalized dx, dy)
+                    # Direction to nearest enemy (as dx, dy)
                     nearest_idx = np.argmin(distances)
                     dx = valid_enemy_positions[nearest_idx, 0] - x
                     dy = valid_enemy_positions[nearest_idx, 1] - y
@@ -253,6 +243,7 @@ class LuxFeaturizer:
                     min_dist = np.min(distances)
                     unit_features[i, 6] = min_dist / np.sqrt(self.map_width**2 + self.map_height**2)
                     
+                    # Direction to nearest relic
                     nearest_idx = np.argmin(distances)
                     dx = valid_relic_positions[nearest_idx, 0] - x
                     dy = valid_relic_positions[nearest_idx, 1] - y
@@ -264,7 +255,7 @@ class LuxFeaturizer:
                 # Team ID
                 unit_features[i, 8] = float(team_id)
                 
-                # Unit ID normalized
+                # Unit ID
                 unit_features[i, 9] = i / self.max_units
         
         return unit_features, unit_mask
@@ -272,20 +263,19 @@ class LuxFeaturizer:
     def _extract_global_features(self, obs: Dict, team_id: int) -> np.ndarray:
         """
         Extract global state features.
-        
-        Features:
-            - Current match step
-            - Current episode step
-            - Team points
-            - Enemy points
-            - Team wins
-            - Enemy wins
-            - Team unit count
-            - Enemy unit count
-            - Team total energy
-            - Enemy total energy
-            - Number of visible relic nodes
-            - Match number in episode
+
+        - Current match step
+        - Current episode step
+        - Team points
+        - Enemy points
+        - Team wins
+        - Enemy wins
+        - Team unit count
+        - Enemy unit count
+        - Team total energy
+        - Enemy total energy
+        - Number of visible relic nodes
+        - Match number in episode
         """
         global_features = np.zeros(12, dtype=np.float32)
         
@@ -331,7 +321,7 @@ class LuxFeaturizer:
         visible_relics = np.sum(relic_mask)
         global_features[10] = visible_relics / self.max_relic_nodes
         
-        # Match number in episode 
+        # Match number in episode
         match_number = total_steps // max_match_steps
         global_features[11] = match_number / 5.0
         
@@ -379,12 +369,13 @@ def create_ctde_observation(
     team_0_features = featurizer.featurize(obs_dict, team_id=0, device=device)
     team_1_features = featurizer.featurize(obs_dict, team_id=1, device=device)
     
-    # Global features combine both teams spatial features
+    # Global features combine both teams' spatial features
     global_spatial = torch.cat([
         team_0_features["spatial_features"],
         team_1_features["spatial_features"]
     ], dim=0)  # (2*C, H, W)
     
+    # Combine global scalars
     global_scalars = torch.cat([
         team_0_features["global_features"],
         team_1_features["global_features"]

@@ -466,24 +466,16 @@ class ReplayBuffer:
     def sample(self, batch_size: int):
 
         samples = random.sample(self.buffer, batch_size)
-        
-        
-        obs_list, actions_list, rewards_list, next_obs_list, dones_list = zip(*samples)
-        
-        
+        obs_list, actions_list, rewards_list, next_obs_list, dones_list = zip(*samples)       
         obs_batch = self._stack_obs(obs_list)
         next_obs_batch = self._stack_obs(next_obs_list)
-        
         
         actions_batch = {
             "player_0": torch.stack([a["player_0"] for a in actions_list]),
             "player_1": torch.stack([a["player_1"] for a in actions_list])
         }
         
-        
-        rewards_batch = torch.stack(rewards_list)
-        
-        
+        rewards_batch = torch.stack(rewards_list)       
         dones_batch = torch.stack(dones_list).float()
         
         return obs_batch, actions_batch, rewards_batch, next_obs_batch, dones_batch
@@ -512,8 +504,6 @@ def soft_update(target_net, source_net, tau):
 
 
 def train_maddpg(config: MADDPGConfig):
-    
-    
     
     os.makedirs(config.checkpoint_dir, exist_ok=True)
     
