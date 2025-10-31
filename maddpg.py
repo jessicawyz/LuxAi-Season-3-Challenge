@@ -4,7 +4,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Dict, Tuple, Optional, List
 from dataclasses import dataclass
 from collections import deque
 import random
@@ -12,8 +11,10 @@ import jax
 
 from envs.vec_env import make_vec_env
 from envs.action_head import HierarchicalActionHead
-from selfplay import OpponentPool, create_selfplay_pool, PFSPConfig
+from selfplay import create_selfplay_pool, PFSPConfig
 from eval import evaluate_and_update_pool, EvalConfig
+from baseline_agent import Agent as BaselineAgent
+from dataclasses import asdict
 
 class ConvLSTMCell(nn.Module):
     
@@ -208,7 +209,8 @@ class MADDPGConfig:
     # Self-play parameters
     use_selfplay: bool = True
     selfplay_ratio: float = 0.5 
-    num_eval_opponents: int = 5 
+    num_eval_opponents: int = 5
+    use_baseline_opponent: bool = False  # Use baseline agent instead of selfplay 
     max_pool_size: int = 20
     elo_k_factor: float = 32.0
     
@@ -503,6 +505,46 @@ def soft_update(target_net, source_net, tau):
         target_param.data.copy_(tau * source_param.data + (1.0 - tau) * target_param.data)
 
 
+class BaselineAgentWrapper:
+    
+    def __init__(self, env_cfg: dict, device: str = "cpu"):
+        self.agent = BaselineAgent("player_1", env_cfg)
+        self.device = device
+        self.env_cfg = env_cfg
+    
+    def get_actions(self, obs_raw_batch, step: int) -> torch.Tensor:
+        
+        batch_size = len(obs_raw_batch["player_1"])
+        max_units = self.env_cfg["max_units"]
+        
+        # Get actions for each environment
+        actions_batch = []
+        for i in range(batch_size):
+            # Extract single environment observation (already a dict)
+            obs_single = obs_raw_batch["player_1"][i]
+            
+            # Convert JAX arrays to numpy if needed
+            obs_dict = {}
+            for key, value in obs_single.items():
+                if hasattr(value, "__array__"):
+                    obs_dict[key] = np.array(value)
+                else:
+                    obs_dict[key] = value
+            
+            # Get actions from baseline agent
+            actions = self.agent.act(step, obs_dict, remainingOverageTime=60)
+            actions_batch.append(actions)
+        
+        # Convert to tensor
+        actions_tensor = torch.tensor(
+            np.stack(actions_batch), 
+            dtype=torch.long, 
+            device=self.device
+        )
+        
+        return actions_tensor
+
+
 def train_maddpg(config: MADDPGConfig):
     
     os.makedirs(config.checkpoint_dir, exist_ok=True)
@@ -529,6 +571,17 @@ def train_maddpg(config: MADDPGConfig):
         reward_mode=config.reward_mode,
         device=config.device
     )
+    
+    # Initialize baseline agent if using it as opponent
+    baseline_wrapper = None
+    if config.use_baseline_opponent:
+        env_cfg = {
+            "max_units": config.max_units,
+            "map_width": config.map_width,
+            "map_height": config.map_height,
+        }
+        baseline_wrapper = BaselineAgentWrapper(env_cfg, device=config.device)
+        print("Initialized baseline agent as opponent")
     
     
     actor_0 = MADDPGActor(config).to(config.device)
@@ -628,8 +681,19 @@ def train_maddpg(config: MADDPGConfig):
                 epsilon=epsilon
             )
             
-            # Player 1: use opponent if in selfplay mode, otherwise use current policy
-            if use_opponent and opponent_actor_1 is not None:
+            # Player 1: use baseline agent, opponent, or current policy
+            if config.use_baseline_opponent and baseline_wrapper is not None:
+                # Get raw observations from environment
+                obs_raw = []
+                for i in range(config.num_envs):
+                    obs_single = jax.tree.map(lambda x: x[i], env.prev_obs_raw)
+                    obs_single_np = jax.tree.map(lambda x: np.array(x), obs_single)
+                    obs_raw.append(obs_single_np)
+                
+                # Convert to dict format for baseline agent
+                obs_raw_batch = {"player_1": [asdict(obs["player_1"]) for obs in obs_raw]}
+                actions_1 = baseline_wrapper.get_actions(obs_raw_batch, step=global_step)
+            elif use_opponent and opponent_actor_1 is not None:
                 actions_1, _, _ = opponent_actor_1(
                     spatial_features=obs["team_1"]["spatial_features"],
                     unit_features=obs["team_1"]["unit_features"],
@@ -813,7 +877,9 @@ def train_maddpg(config: MADDPGConfig):
             mean_reward = np.mean(episode_rewards)
             elapsed = (time.time() - start_time) / 60
             log_msg = f"[{elapsed:.2f} min] Step {global_step} | Epsilon {epsilon:.3f} | Mean Reward {mean_reward:.2f} | Buffer {len(replay_buffer)}"
-            if use_opponent and current_opponent:
+            if config.use_baseline_opponent:
+                log_msg += " | Opponent: Baseline"
+            elif use_opponent and current_opponent:
                 log_msg += f" | Opponent ELO {current_opponent.elo_rating:.1f}"
             print(log_msg)
         
@@ -946,6 +1012,7 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint-dir", type=str, default="checkpoint", help="Checkpoint directory")
     parser.add_argument("--use-selfplay", action="store_true", default=True, help="Use self-play training")
     parser.add_argument("--no-selfplay", action="store_false", dest="use_selfplay", help="Disable self-play")
+    parser.add_argument("--use-baseline-opponent", action="store_true", default=False, help="Use baseline agent as opponent")
     parser.add_argument("--selfplay-ratio", type=float, default=0.5, help="Ratio of training vs opponent pool")
     parser.add_argument("--num-eval-opponents", type=int, default=5, help="Number of opponents for evaluation")
     parser.add_argument("--max-pool-size", type=int, default=20, help="Max opponent pool size")
@@ -971,6 +1038,7 @@ if __name__ == "__main__":
         epsilon_decay_steps=args.epsilon_decay_steps,
         checkpoint_dir=args.checkpoint_dir,
         use_selfplay=args.use_selfplay,
+        use_baseline_opponent=args.use_baseline_opponent,
         selfplay_ratio=args.selfplay_ratio,
         num_eval_opponents=args.num_eval_opponents,
         max_pool_size=args.max_pool_size,
