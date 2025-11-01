@@ -8,6 +8,7 @@
     pip install -e Lux-Design-S3/src
     pip install nvidia-ml-py psutil 
     pip install -U jax[cuda12] jaxlib
+    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
 
 Test:
 
@@ -39,6 +40,10 @@ Run:
 
 ## Usage
 
+    python mappo.py --use-selfplay --selfplay-ratio 0.5 --num-eval-opponents 5 --num-envs 2 --total-timesteps 10000000 --eval-freq 50000 --snapshot-freq 10000
+
     python maddpg.py --use-selfplay --selfplay-ratio 0.5 --num-eval-opponents 5 --num-envs 2 --total-timesteps 10000000 --eval-freq 50000 --snapshot-freq 10000
 
     luxai-s3 main.py main.py --output=replay.html
+
+    luxai-s3 main.py baseline_main.py --output=replay.html
