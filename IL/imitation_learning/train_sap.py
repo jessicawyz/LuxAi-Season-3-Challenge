@@ -18,6 +18,7 @@ N_CHANNELS = 29
 N_GLOBAL = 17
 N_CLASSES = 1
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def seed_everything(seed_value):
     random.seed(seed_value)
@@ -285,7 +286,7 @@ def train_model(
     scheduler,
     num_epochs,
     model_name="model",
-    num_episodes_per_epoch=1000,
+    num_episodes_per_epoch=10, #1000
     batch_size=128,
 ):
     best_loss = 10**9
@@ -298,7 +299,7 @@ def train_model(
     )
 
     for epoch in range(num_epochs):
-        model.cuda()
+        model.to(device)
 
         np.random.shuffle(train_episodes)
 
@@ -327,9 +328,9 @@ def train_model(
             total = 0
 
             for item in tqdm(dataloader, leave=False):
-                states = item[0].cuda().float()
-                gf = item[1].cuda().float()
-                label = item[2].cuda().float()
+                states = item[0].float()
+                gf = item[1].float()
+                label = item[2].float()
                 optimizer.zero_grad()
 
                 with torch.set_grad_enabled(phase == "train"):
@@ -392,3 +393,8 @@ def main(submission_ids, min_opp_score):
         num_epochs=50,
         model_name=MODEL_NAME,
     )
+
+if __name__ == "__main__":
+    submission_ids = [42613059, 42596204]
+    min_opp_score = 647
+    main(submission_ids, min_opp_score)
