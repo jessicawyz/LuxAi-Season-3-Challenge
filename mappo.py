@@ -152,7 +152,7 @@ class MAPPOConfig:
     # Training parameters
     total_timesteps: int = 10_000_000
     learning_rate: float = 3e-4
-    n_steps: int = 2048  # Steps per update
+    n_steps: int = 512  # Steps per update
     n_epochs: int = 10  # PPO epochs per update
     batch_size: int = 256  # Mini-batch size
     gamma: float = 0.99
@@ -634,7 +634,7 @@ class RolloutBuffer:
             else:
                 next_values = values[t + 1]
             
-            next_non_terminal = 1.0 - dones[t]
+            next_non_terminal = 1.0 - dones[t].float()
             delta = rewards[t] + gamma * next_values * next_non_terminal - values[t]
             advantages[t] = last_gae_lam = delta + gamma * gae_lambda * next_non_terminal * last_gae_lam
         
