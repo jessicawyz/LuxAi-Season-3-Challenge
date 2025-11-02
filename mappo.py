@@ -9,7 +9,6 @@ from dataclasses import dataclass
 from collections import deque
 import random
 import jax
-from dataclasses import asdict
 
 from envs.vec_env import make_vec_env
 from envs.action_head import HierarchicalActionHead
@@ -197,24 +196,13 @@ class MAPPOConfig:
     max_pool_size: int = 20
     elo_k_factor: float = 32.0
     
-    # IL reward parameters
-    use_il_reward: bool = False
-    il_model_path: str = "IL/imitation_learning/weights/model.pth"
-    il_reward_weight: float = 0.1
-    il_reward_bonus: float = 0.1
-    il_reward_penalty: float = 0.1
-    il_reward_anneal: bool = True
-    il_reward_anneal_start: float = 0.5
-    il_reward_anneal_end: float = 0.05
-    il_reward_anneal_steps: int = 500_000
-    il_compare_sap_targets: bool = False
-    
     log_freq: int = 1000
     
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
 
 
 class MAPPOActor(nn.Module):
+    """Actor network that outputs action distributions"""
     
     def __init__(self, config: MAPPOConfig):
         super().__init__()
@@ -354,14 +342,18 @@ class MAPPOActor(nn.Module):
         
         # Action type log probs
         action_type_log_probs = F.log_softmax(action_type_logits_masked, dim=-1)
+        # Clamp action indices to valid range to prevent CUDA errors
+        action_type_indices = torch.clamp(actions[:, :, 0], 0, action_type_log_probs.shape[-1] - 1)
         selected_action_type_log_probs = action_type_log_probs.gather(
-            -1, actions[:, :, 0].unsqueeze(-1)
+            -1, action_type_indices.unsqueeze(-1)
         ).squeeze(-1)
         
         # SAP target log probs (only for SAP actions)
         sap_target_log_probs = F.log_softmax(sap_target_logits_masked, dim=-1)
+        # Clamp SAP target indices to valid range
+        sap_target_indices = torch.clamp(actions[:, :, 1], 0, sap_target_log_probs.shape[-1] - 1)
         selected_sap_target_log_probs = sap_target_log_probs.gather(
-            -1, actions[:, :, 1].unsqueeze(-1)
+            -1, sap_target_indices.unsqueeze(-1)
         ).squeeze(-1)
         
         # Combine log probs (only count SAP target for SAP actions, action type 5)
@@ -407,17 +399,80 @@ class MAPPOActor(nn.Module):
         entropy = entropy.sum(dim=1) / (unit_mask.float().sum(dim=1) + 1e-8)
         
         return entropy.mean()
+    
+    def evaluate_actions(
+        self,
+        spatial_features,
+        unit_features,
+        unit_mask,
+        global_features,
+        unit_energies,
+        unit_positions,
+        tile_types,
+        actions,
+        spatial_hidden_state=None
+    ):
+        """Evaluate actions: compute log probs and entropy for given actions"""
+        batch_size = spatial_features.shape[0]
+        
+        # Encode features
+        spatial_encoded, new_spatial_hidden_state = self.spatial_encoder(
+            spatial_features, spatial_hidden_state
+        )
+        unit_encoded, unit_aggregated = self.unit_encoder(unit_features, unit_mask)
+        global_encoded = F.relu(self.global_proj(global_features))
+        
+        # Fuse features
+        fused = self.fusion(torch.cat([
+            spatial_encoded, unit_aggregated, global_encoded
+        ], dim=-1))
+        fused_per_unit = fused.unsqueeze(1).expand(-1, self.config.max_units, -1)
+        unit_features_combined = fused_per_unit + unit_encoded
+        
+        # Get action logits
+        action_type_logits, sap_target_logits, mask_info = self.action_head(
+            unit_features_combined,
+            unit_mask,
+            unit_energies,
+            unit_positions,
+            self.config.map_width,
+            self.config.map_height,
+            tile_types,
+            unit_move_cost=2,
+            unit_sap_cost=40,
+        )
+        
+        # Compute log probabilities of given actions
+        log_probs = self.compute_log_probs(
+            actions,
+            action_type_logits,
+            sap_target_logits,
+            mask_info["action_type_mask"],
+            mask_info["sap_target_mask"],
+            unit_mask
+        )
+        
+        # Compute entropy
+        entropy = self.compute_entropy(
+            action_type_logits,
+            sap_target_logits,
+            mask_info["action_type_mask"],
+            mask_info["sap_target_mask"],
+            unit_mask
+        )
+        
+        return log_probs, entropy, new_spatial_hidden_state
 
 
 class MAPPOCritic(nn.Module):
-    
+    """Centralized critic that outputs state values"""
     
     def __init__(self, config: MAPPOConfig):
         super().__init__()
         
         self.config = config
         
-        # Global spatial encoder
+        # Global spatial encoder (sees both teams)
         self.spatial_encoder = SpatialEncoder(
             input_channels=config.spatial_channels * 2,
             hidden_dim=config.convlstm_hidden_dim,
@@ -489,6 +544,7 @@ class MAPPOCritic(nn.Module):
 
 
 class RolloutBuffer:
+    """Buffer for storing trajectories for PPO"""
     
     def __init__(self, n_steps: int, num_envs: int, device: str):
         self.n_steps = n_steps
@@ -527,7 +583,7 @@ class RolloutBuffer:
             self.full = True
     
     def get(self, last_values: torch.Tensor):
-        
+        """Get all data and compute advantages using GAE"""
         assert self.full, "Buffer not full"
         
         # Stack everything
@@ -565,7 +621,7 @@ class RolloutBuffer:
         gamma: float = 0.99,
         gae_lambda: float = 0.95
     ):
-        
+        """Compute Generalized Advantage Estimation"""
         n_steps = rewards.shape[0]
         num_envs = rewards.shape[1]
         
@@ -593,7 +649,7 @@ def soft_update(target_net, source_net, tau):
 
 
 class BaselineAgentWrapper:
-    
+    """Wrapper to use baseline agent in training loop"""
     
     def __init__(self, env_cfg: dict, device: str = "cpu"):
         self.agent = BaselineAgent("player_1", env_cfg)
@@ -601,7 +657,7 @@ class BaselineAgentWrapper:
         self.env_cfg = env_cfg
     
     def get_actions(self, obs_raw_batch, step: int) -> torch.Tensor:
-        
+        """Convert observations and get actions from baseline agent"""
         batch_size = len(obs_raw_batch["player_1"])
         max_units = self.env_cfg["max_units"]
         
@@ -658,33 +714,6 @@ def train_mappo(config: MAPPOConfig):
         device=config.device
     )
     
-    # Initialize IL reward shaper if enabled
-    il_reward_shaper = None
-    if config.use_il_reward:
-        print(f"Initializing IL reward shaper...")
-        try:
-            from envs.il_rewards import create_il_reward_shaper
-            il_reward_shaper = create_il_reward_shaper(
-                il_model_path=config.il_model_path,
-                num_envs=config.num_envs,
-                device=config.device,
-                bonus_per_match=config.il_reward_bonus,
-                penalty_per_mismatch=config.il_reward_penalty,
-                weight=config.il_reward_weight,
-                anneal=config.il_reward_anneal,
-                anneal_start=config.il_reward_anneal_start,
-                anneal_end=config.il_reward_anneal_end,
-                anneal_steps=config.il_reward_anneal_steps,
-                compare_sap_targets=config.il_compare_sap_targets,
-                map_size=config.map_width,
-                max_units=config.max_units,
-            )
-            print(f"IL reward shaper initialized successfully")
-        except Exception as e:
-            print(f"Warning: Failed to initialize IL reward shaper: {e}")
-            print(f"Continuing without IL rewards")
-            config.use_il_reward = False
-    
     # Initialize baseline agent if using it as opponent
     baseline_wrapper = None
     if config.use_baseline_opponent:
@@ -726,8 +755,6 @@ def train_mappo(config: MAPPOConfig):
     start_time = time.time()
     
     print("Starting MAPPO training...")
-    print(f"Device: {config.device}")
-    print(f"Num envs: {config.num_envs}")
     
     while global_step < config.total_timesteps:
         
@@ -768,9 +795,6 @@ def train_mappo(config: MAPPOConfig):
         # === Collect rollouts ===
         rollout_buffer_0.reset()
         rollout_buffer_1.reset()
-        
-        # Initialize IL info dict
-        il_info = {}
         
         for step in range(config.n_steps):
             with torch.no_grad():
@@ -853,73 +877,6 @@ def train_mappo(config: MAPPOConfig):
             
             next_obs, rewards, dones, truncated, infos = env.step(actions_dict, seed=global_step + step)
             
-            # Compute IL rewards if enabled
-            if config.use_il_reward and il_reward_shaper is not None and step == 0:  # Only on first step to avoid overhead
-                try:
-                    # Extract raw observations from vectorized environment                        
-                        raw_obs_batch = []
-                        for i in range(config.num_envs):
-                            # Extract single environment observation
-                            obs_single = jax.tree.map(lambda x: x[i], env.prev_obs_raw)
-                            # Convert to numpy
-                            obs_single = jax.tree.map(lambda x: np.array(x), obs_single)
-                            raw_obs_batch.append(obs_single)
-                        
-                        # Compute IL rewards for team 0
-                        obs_team_0 = [asdict(o["player_0"]) for o in raw_obs_batch]
-                        actions_team_0 = actions_0.cpu().numpy()
-                        unit_masks_0 = obs["team_0"]["unit_mask"].cpu().numpy()
-                        
-                        game_params = {
-                            "max_units": config.max_units,
-                            "unit_move_cost": env.env_params.unit_move_cost,
-                            "unit_sap_cost": env.env_params.unit_sap_cost,
-                            "unit_sap_range": env.env_params.unit_sap_range,
-                            "unit_sensor_range": env.env_params.unit_sensor_range,
-                            "nebula_tile_energy_reduction": env.env_params.nebula_tile_energy_reduction,
-                            "unit_sap_dropoff_factor": env.env_params.unit_sap_dropoff_factor,
-                            "unit_energy_void_factor": env.env_params.unit_energy_void_factor,
-                        }
-                        
-                        il_r0, il_i0 = il_reward_shaper.compute_rewards(
-                            obs_batch=obs_team_0,
-                            team_ids=[0] * config.num_envs,
-                            rl_actions=actions_team_0,
-                            unit_masks=unit_masks_0,
-                            game_params=game_params,
-                            global_step=global_step + step,
-                        )
-                        il_rewards_0 = torch.from_numpy(il_r0).float().to(config.device)
-                        
-                        # Compute IL rewards for team 1
-                        obs_team_1 = [asdict(o["player_1"]) for o in raw_obs_batch]
-                        actions_team_1 = actions_1.cpu().numpy()
-                        unit_masks_1 = obs["team_1"]["unit_mask"].cpu().numpy()
-                        
-                        il_r1, il_i1 = il_reward_shaper.compute_rewards(
-                            obs_batch=obs_team_1,
-                            team_ids=[1] * config.num_envs,
-                            rl_actions=actions_team_1,
-                            unit_masks=unit_masks_1,
-                            game_params=game_params,
-                            global_step=global_step + step,
-                        )
-                        il_rewards_1 = torch.from_numpy(il_r1).float().to(config.device)
-                        
-                        # Add IL rewards to environment rewards
-                        rewards["player_0"] = rewards["player_0"] + il_rewards_0
-                        rewards["player_1"] = rewards["player_1"] + il_rewards_1
-                        
-                        # Store IL info for logging (only once per rollout)
-                        if step == 0:
-                            il_info = {}
-                            il_info.update({f"team_0_{k}": v for k, v in il_i0.items()})
-                            il_info.update({f"team_1_{k}": v for k, v in il_i1.items()})
-                
-                except Exception as e:
-                    if step == 0:  # Only print once
-                        print(f"Warning: IL reward computation failed: {e}")
-            
             # Store in buffers
             values = torch.stack([values_0, values_1], dim=1)  # (num_envs, 2)
             log_probs = torch.stack([log_probs_0, log_probs_1], dim=1)  # (num_envs, 2)
@@ -936,7 +893,7 @@ def train_mappo(config: MAPPOConfig):
             obs = next_obs
             global_step += config.num_envs
         
-        # Compute advantages
+        # === Compute advantages ===
         with torch.no_grad():
             last_values_0, _ = critic_0(
                 global_spatial_features=obs["global"]["spatial_features"],
@@ -961,7 +918,7 @@ def train_mappo(config: MAPPOConfig):
         advantages_0, returns_0 = rollout_buffer_0.get(last_values)
         advantages_1, returns_1 = rollout_buffer_1.get(last_values)
         
-        # PPO updates
+        # === PPO updates ===
         for epoch in range(config.n_epochs):
             # Update actor 0 and critic 0
             update_ppo(
@@ -995,15 +952,6 @@ def train_mappo(config: MAPPOConfig):
                 log_msg += " | Opponent: Baseline"
             elif use_opponent and current_opponent:
                 log_msg += f" | Opponent ELO {current_opponent.elo_rating:.1f}"
-            
-            # Add IL statistics if available
-            if config.use_il_reward and il_info:
-                # Average across teams
-                il_agreement = (il_info.get("team_0_il_agreement_rate", 0) + 
-                               il_info.get("team_1_il_agreement_rate", 0)) / 2
-                il_weight = il_info.get("team_0_il_weight", 0)
-                log_msg += f" | IL Agree {il_agreement:.2%} | IL λ {il_weight:.3f}"
-            
             print(log_msg)
         
         # Evaluation and checkpoint management
@@ -1121,6 +1069,7 @@ def update_ppo(
     config,
     team_id
 ):
+    """Perform one PPO update"""
     
     # Flatten data
     n_steps = config.n_steps
@@ -1176,8 +1125,8 @@ def update_ppo(
         batch_advantages = advantages_flat[batch_indices]
         batch_returns = returns_flat[batch_indices]
         
-        # Forward pass through actor
-        _, new_log_probs, entropy, _, _ = actor(
+        # Evaluate stored actions with current policy
+        new_log_probs, entropy, _ = actor.evaluate_actions(
             spatial_features=batch_obs[team_key]["spatial_features"],
             unit_features=batch_obs[team_key]["unit_features"],
             unit_mask=batch_obs[team_key]["unit_mask"],
@@ -1186,8 +1135,7 @@ def update_ppo(
             unit_positions=(batch_obs[team_key]["unit_features"][:, :, :2] *
                           torch.tensor([config.map_width, config.map_height], device=config.device)).long(),
             tile_types=batch_obs[team_key]["spatial_features"][:, 1] * 2,
-            epsilon=0.0,
-            deterministic=False
+            actions=batch_actions
         )
         
         # PPO loss
@@ -1274,18 +1222,6 @@ if __name__ == "__main__":
     parser.add_argument("--eval-freq", type=int, default=50_000, help="Evaluation frequency (steps)")
     parser.add_argument("--log-freq", type=int, default=1000, help="Log frequency (steps)")
     
-    # IL reward arguments
-    parser.add_argument("--use-il-reward", action="store_true", help="Enable IL reward shaping")
-    parser.add_argument("--il-model-path", type=str, default="IL/imitation_learning/weights/model.pth", help="Path to IL model")
-    parser.add_argument("--il-reward-weight", type=float, default=0.1, help="IL reward weight (lambda)")
-    parser.add_argument("--il-reward-bonus", type=float, default=0.1, help="Bonus per matching action")
-    parser.add_argument("--il-reward-penalty", type=float, default=0.1, help="Penalty per mismatched action")
-    parser.add_argument("--il-reward-anneal", action="store_true", default=True, help="Anneal IL weight")
-    parser.add_argument("--il-reward-anneal-start", type=float, default=0.5, help="IL anneal start weight")
-    parser.add_argument("--il-reward-anneal-end", type=float, default=0.05, help="IL anneal end weight")
-    parser.add_argument("--il-reward-anneal-steps", type=int, default=500_000, help="IL anneal steps")
-    parser.add_argument("--il-compare-sap-targets", action="store_true", help="Compare SAP targets")
-    
     args = parser.parse_args()
     
     config = MAPPOConfig(
@@ -1314,17 +1250,6 @@ if __name__ == "__main__":
         snapshot_freq=args.snapshot_freq,
         eval_freq=args.eval_freq,
         log_freq=args.log_freq,
-        # IL reward parameters
-        use_il_reward=args.use_il_reward,
-        il_model_path=args.il_model_path,
-        il_reward_weight=args.il_reward_weight,
-        il_reward_bonus=args.il_reward_bonus,
-        il_reward_penalty=args.il_reward_penalty,
-        il_reward_anneal=args.il_reward_anneal,
-        il_reward_anneal_start=args.il_reward_anneal_start,
-        il_reward_anneal_end=args.il_reward_anneal_end,
-        il_reward_anneal_steps=args.il_reward_anneal_steps,
-        il_compare_sap_targets=args.il_compare_sap_targets,
     )
     
     train_mappo(config)

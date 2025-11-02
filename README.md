@@ -40,9 +40,9 @@ Run:
 
 ## Usage
 
-    python mappo.py --use-baseline-opponent --use-il-reward --il-model-path IL/imitation_learning/weights/model.pth --use-selfplay --selfplay-ratio 0.5 --num-eval-opponents 5 --num-envs 2 --total-timesteps 10000000 --eval-freq 50000 --snapshot-freq 10000
+    python mappo.py --use-baseline-opponent --use-selfplay --selfplay-ratio 0.5 --num-eval-opponents 5 --num-envs 2 --total-timesteps 10000000 --eval-freq 50000 --snapshot-freq 10000
 
-    python maddpg.py --use-baseline-opponent --use-il-reward --il-model-path IL/imitation_learning/weights/model.pth --use-selfplay --selfplay-ratio 0.5 --num-eval-opponents 5 --num-envs 2 --total-timesteps 10000000 --eval-freq 50000 --snapshot-freq 10000
+    python maddpg.py --use-baseline-opponent --use-selfplay --selfplay-ratio 0.5 --num-eval-opponents 5 --num-envs 2 --total-timesteps 10000000 --eval-freq 50000 --snapshot-freq 10000
 
     luxai-s3 main.py main.py --output=replay.html
 

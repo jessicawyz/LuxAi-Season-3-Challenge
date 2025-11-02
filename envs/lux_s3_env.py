@@ -28,13 +28,7 @@ class LuxS3Wrapper:
         
         epsilon_start: float = 1.0,
         epsilon_end: float = 0.05,
-        epsilon_decay_matches: int = 3,
-        
-        # IL reward shaping
-        use_il_reward: bool = False,
-        il_reward_coef: float = 0.1,
-        il_unit_unet_path: str = "IL/imitation_learning/weights/unit_unet.pth",
-        il_sap_unet_path: str = "IL/imitation_learning/weights/sap_unet.pth",
+        epsilon_decay_matches: int = 3,  
     ):
         if env_params is None:
             env_params = EnvParams()
@@ -81,23 +75,6 @@ class LuxS3Wrapper:
         self.epsilon_end = epsilon_end
         self.epsilon_decay_matches = epsilon_decay_matches
         
-        # IL reward shaping
-        self.use_il_reward = use_il_reward
-        self.il_reward_shaper = None
-        if use_il_reward:
-            try:
-                from envs.il_rewards import ILRewardShaper
-                self.il_reward_shaper = ILRewardShaper(
-                    unit_unet_path=il_unit_unet_path,
-                    sap_unet_path=il_sap_unet_path,
-                    reward_coef=il_reward_coef,
-                    device=device,
-                )
-                print(f"IL reward shaping enabled (coef={il_reward_coef})")
-            except Exception as e:
-                print(f"Warning: Could not initialize IL reward shaper: {e}")
-                self.use_il_reward = False
-        
         # State tracking
         self.state = None
         self.prev_obs = None
@@ -111,10 +88,6 @@ class LuxS3Wrapper:
         # Reset relic memories
         for memory in self.relic_memories.values():
             memory.reset()
-        
-        # Reset IL reward shaper
-        if self.use_il_reward and self.il_reward_shaper is not None:
-            self.il_reward_shaper.reset()
         
         # Reset state tracking
         self.state = state
@@ -170,15 +143,6 @@ class LuxS3Wrapper:
                     info,
                     team_id,
                 )
-                
-                # Add IL reward if enabled
-                if self.use_il_reward and self.il_reward_shaper is not None:
-                    il_reward = self.il_reward_shaper.compute_reward(
-                        rl_actions=actions[player_key],
-                        obs_raw=obs_raw,  # Pass full obs with both teams
-                        team_id=team_id,
-                    )
-                    rewards[player_key] += il_reward
                 
                 # Update relic memory
                 prev_points = prev_obs_team["team_points"][team_id]

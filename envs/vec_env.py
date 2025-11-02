@@ -203,7 +203,7 @@ class VecLuxS3Env:
                     active_positions
                 )
             
-            rewards_list.append([env_rewards["player_0"][0], env_rewards["player_1"][0]])
+            rewards_list.append([env_rewards["player_0"], env_rewards["player_1"]])
             
             # Build info dict
             epsilon = self.wrapper.get_epsilon()
