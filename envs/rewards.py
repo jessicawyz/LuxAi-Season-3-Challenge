@@ -21,6 +21,9 @@ class LuxRewardShaper:
         survival_reward: float = 0.05,
         exploration_reward: float = 0.5,
         relic_discovery_reward: float = 10.0,
+        
+        # IL reward shaping
+        il_reward_shaper = None,  # ILRewardShaper instance
     ):
         """
             reward_mode: "sparse" (only wins) or "dense" (wins + shaped rewards)
@@ -33,9 +36,11 @@ class LuxRewardShaper:
             survival_reward: Small constant reward per step
             exploration_reward: Reward for exploring new tiles
             relic_discovery_reward: Reward for discovering new relic nodes
+            il_reward_shaper: ILRewardShaper for imitation learning rewards
         """
         
         self.reward_mode = reward_mode
+        self.il_reward_shaper = il_reward_shaper
         
         # Sparse rewards
         self.match_win_bonus = match_win_bonus
@@ -60,13 +65,33 @@ class LuxRewardShaper:
         done: bool,
         info: Dict,
         team_id: int,
-    ) -> float:
-        
+        actions: Optional[np.ndarray] = None,
+        global_step: Optional[int] = None,
+    ) -> Tuple[float, Dict]:
+        """
+        Compute reward per team
+        """
         ## reward per team
         if self.reward_mode == "sparse":
-            return self._compute_sparse_reward(obs, next_obs, done, info, team_id)
+            env_reward = self._compute_sparse_reward(obs, next_obs, done, info, team_id)
         else:
-            return self._compute_dense_reward(obs, next_obs, done, info, team_id)
+            env_reward = self._compute_dense_reward(obs, next_obs, done, info, team_id)
+        
+        # Compute IL reward if shaper is available
+        il_reward = 0.0
+        il_info = {}
+        
+        if self.il_reward_shaper is not None and actions is not None:
+            pass
+        
+        info_dict = {
+            "env_reward": env_reward,
+            "il_reward": il_reward,
+            "total_reward": env_reward + il_reward,
+        }
+        info_dict.update(il_info)
+        
+        return env_reward + il_reward, info_dict
     
     def _compute_sparse_reward(
         self,
@@ -183,6 +208,39 @@ class LuxRewardShaper:
     def reset(self):
         
         self.prev_state = None
+    
+    def compute_il_rewards_batch(
+        self,
+        obs_batch: list,
+        team_ids: list,
+        actions_batch: np.ndarray,
+        unit_masks: np.ndarray,
+        game_params: dict,
+        global_step: Optional[int] = None,
+    ) -> Tuple[np.ndarray, Dict]:
+        
+        if self.il_reward_shaper is None:
+            # Return zeros if no IL shaper
+            return np.zeros(len(obs_batch), dtype=np.float32), {}
+        
+        il_rewards, info = self.il_reward_shaper.compute_rewards(
+            obs_batch=obs_batch,
+            team_ids=team_ids,
+            rl_actions=actions_batch,
+            unit_masks=unit_masks,
+            game_params=game_params,
+            global_step=global_step,
+        )
+        
+        return il_rewards, info
+    
+    def reset_il(self, env_idx: Optional[int] = None):
+        if self.il_reward_shaper is not None:
+            self.il_reward_shaper.reset(env_idx)
+    
+    def reset_il_statistics(self):
+        if self.il_reward_shaper is not None:
+            self.il_reward_shaper.reset_statistics()
 
 
 class RelicMemory:
