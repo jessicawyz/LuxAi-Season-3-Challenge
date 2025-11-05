@@ -159,10 +159,10 @@ class MAPPOConfig:
     
     # Training parameters
     total_timesteps: int = 10_000_000
-    learning_rate: float = 3e-4
-    n_steps: int = 2048  # Steps per update
+    learning_rate: float = 1e-4
+    n_steps: int = 512  # Steps per update
     n_epochs: int = 10  # PPO epochs per update
-    batch_size: int = 256  # Mini-batch size
+    batch_size: int = 64  # Mini-batch size
     gamma: float = 0.99
     gae_lambda: float = 0.95
     clip_range: float = 0.2
@@ -180,8 +180,8 @@ class MAPPOConfig:
     spatial_channels: int = 23
     unit_feature_dim: int = 10
     global_feature_dim: int = 12
-    hidden_dim: int = 256
-    convlstm_hidden_dim: int = 128
+    hidden_dim: int = 64
+    convlstm_hidden_dim: int = 32
     transformer_heads: int = 4
     transformer_layers: int = 2
     
@@ -206,7 +206,7 @@ class MAPPOConfig:
     
     # IL reward parameters
     use_il_reward: bool = False
-    il_model_path: str = "checkpoint/unit_unet.pth"
+    il_model_path: str = "IL/imitation_learning/weights/model.pth"
     il_reward_weight: float = 0.1  # lambda
     il_reward_bonus: float = 0.1   # bonus per matching action
     il_reward_penalty: float = 0.1  # penalty per mismatched action
@@ -223,7 +223,6 @@ class MAPPOConfig:
 
 
 class MAPPOActor(nn.Module):
-    """Actor network that outputs action distributions"""
     
     def __init__(self, config: MAPPOConfig):
         super().__init__()
@@ -351,7 +350,7 @@ class MAPPOActor(nn.Module):
         sap_target_mask,
         unit_mask
     ):
-        """Compute log probabilities of actions"""
+        
         batch_size = actions.shape[0]
         
         # Apply masks to logits
@@ -363,14 +362,18 @@ class MAPPOActor(nn.Module):
         
         # Action type log probs
         action_type_log_probs = F.log_softmax(action_type_logits_masked, dim=-1)
+        # Clamp action indices to valid range to prevent CUDA errors
+        action_type_indices = torch.clamp(actions[:, :, 0], 0, action_type_log_probs.shape[-1] - 1)
         selected_action_type_log_probs = action_type_log_probs.gather(
-            -1, actions[:, :, 0].unsqueeze(-1)
+            -1, action_type_indices.unsqueeze(-1)
         ).squeeze(-1)
         
         # SAP target log probs (only for SAP actions)
         sap_target_log_probs = F.log_softmax(sap_target_logits_masked, dim=-1)
+        # Clamp SAP target indices to valid range
+        sap_target_indices = torch.clamp(actions[:, :, 1], 0, sap_target_log_probs.shape[-1] - 1)
         selected_sap_target_log_probs = sap_target_log_probs.gather(
-            -1, actions[:, :, 1].unsqueeze(-1)
+            -1, sap_target_indices.unsqueeze(-1)
         ).squeeze(-1)
         
         # Combine log probs (only count SAP target for SAP actions, action type 5)
@@ -393,7 +396,7 @@ class MAPPOActor(nn.Module):
         sap_target_mask,
         unit_mask
     ):
-        """Compute entropy of action distributions"""
+        
         # Apply masks
         action_type_logits_masked = action_type_logits.clone()
         action_type_logits_masked[~action_type_mask] = -1e10
@@ -416,10 +419,72 @@ class MAPPOActor(nn.Module):
         entropy = entropy.sum(dim=1) / (unit_mask.float().sum(dim=1) + 1e-8)
         
         return entropy.mean()
+    
+    def evaluate_actions(
+        self,
+        spatial_features,
+        unit_features,
+        unit_mask,
+        global_features,
+        unit_energies,
+        unit_positions,
+        tile_types,
+        actions,
+        spatial_hidden_state=None
+    ):
+        
+        batch_size = spatial_features.shape[0]
+        
+        # Encode features
+        spatial_encoded, new_spatial_hidden_state = self.spatial_encoder(
+            spatial_features, spatial_hidden_state
+        )
+        unit_encoded, unit_aggregated = self.unit_encoder(unit_features, unit_mask)
+        global_encoded = F.relu(self.global_proj(global_features))
+        
+        # Fuse features
+        fused = self.fusion(torch.cat([
+            spatial_encoded, unit_aggregated, global_encoded
+        ], dim=-1))
+        fused_per_unit = fused.unsqueeze(1).expand(-1, self.config.max_units, -1)
+        unit_features_combined = fused_per_unit + unit_encoded
+        
+        # Get action logits
+        action_type_logits, sap_target_logits, mask_info = self.action_head(
+            unit_features_combined,
+            unit_mask,
+            unit_energies,
+            unit_positions,
+            self.config.map_width,
+            self.config.map_height,
+            tile_types,
+            unit_move_cost=2,
+            unit_sap_cost=40,
+        )
+        
+        # Compute log probabilities of given actions
+        log_probs = self.compute_log_probs(
+            actions,
+            action_type_logits,
+            sap_target_logits,
+            mask_info["action_type_mask"],
+            mask_info["sap_target_mask"],
+            unit_mask
+        )
+        
+        # Compute entropy
+        entropy = self.compute_entropy(
+            action_type_logits,
+            sap_target_logits,
+            mask_info["action_type_mask"],
+            mask_info["sap_target_mask"],
+            unit_mask
+        )
+        
+        return log_probs, entropy, new_spatial_hidden_state
 
 
 class MAPPOCritic(nn.Module):
-    """Centralized critic that outputs state values"""
     
     def __init__(self, config: MAPPOConfig):
         super().__init__()
@@ -588,7 +653,7 @@ class RolloutBuffer:
             else:
                 next_values = values[t + 1]
             
-            next_non_terminal = 1.0 - dones[t]
+            next_non_terminal = 1.0 - dones[t].float()
             delta = rewards[t] + gamma * next_values * next_non_terminal - values[t]
             advantages[t] = last_gae_lam = delta + gamma * gae_lambda * next_non_terminal * last_gae_lam
         
@@ -1203,7 +1268,7 @@ def update_ppo(
         batch_returns = returns_flat[batch_indices]
         
         # Forward pass through actor
-        _, new_log_probs, entropy, _, _ = actor(
+        new_log_probs, entropy, _ = actor.evaluate_actions(
             spatial_features=batch_obs[team_key]["spatial_features"],
             unit_features=batch_obs[team_key]["unit_features"],
             unit_mask=batch_obs[team_key]["unit_mask"],
@@ -1212,8 +1277,7 @@ def update_ppo(
             unit_positions=(batch_obs[team_key]["unit_features"][:, :, :2] *
                           torch.tensor([config.map_width, config.map_height], device=config.device)).long(),
             tile_types=batch_obs[team_key]["spatial_features"][:, 1] * 2,
-            epsilon=0.0,
-            deterministic=False
+            actions=batch_actions
         )
         
         # PPO loss
@@ -1302,7 +1366,7 @@ if __name__ == "__main__":
     
     # IL reward arguments
     parser.add_argument("--use-il-reward", action="store_true", help="Enable IL reward shaping")
-    parser.add_argument("--il-model-path", type=str, default="checkpoint/unit_unet.pth", help="Path to IL model")
+    parser.add_argument("--il-model-path", type=str, default="IL/imitation_learning/weights/model.pth", help="Path to IL model")
     parser.add_argument("--il-reward-weight", type=float, default=0.1, help="IL reward weight (lambda)")
     parser.add_argument("--il-reward-bonus", type=float, default=0.1, help="Bonus per matching action")
     parser.add_argument("--il-reward-penalty", type=float, default=0.1, help="Penalty per mismatched action")

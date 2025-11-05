@@ -224,7 +224,7 @@ class MADDPGConfig:
     
     # IL reward parameters
     use_il_reward: bool = False
-    il_model_path: str = "checkpoint/unit_unet.pth"
+    il_model_path: str = "IL/imitation_learning/weights/model.pth"
     il_reward_weight: float = 0.1  # lambda
     il_reward_bonus: float = 0.1   # bonus per matching action
     il_reward_penalty: float = 0.1  # penalty per mismatched action
@@ -1160,7 +1160,7 @@ if __name__ == "__main__":
     
     # IL reward arguments
     parser.add_argument("--use-il-reward", action="store_true", help="Enable IL reward shaping")
-    parser.add_argument("--il-model-path", type=str, default="checkpoint/unit_unet.pth", help="Path to IL model")
+    parser.add_argument("--il-model-path", type=str, default="IL/imitation_learning/weights/model.pth", help="Path to IL model")
     parser.add_argument("--il-reward-weight", type=float, default=0.1, help="IL reward weight (lambda)")
     parser.add_argument("--il-reward-bonus", type=float, default=0.1, help="Bonus per matching action")
     parser.add_argument("--il-reward-penalty", type=float, default=0.1, help="Penalty per mismatched action")
