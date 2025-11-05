@@ -602,7 +602,7 @@ class RolloutBuffer:
             self.full = True
     
     def get(self, last_values: torch.Tensor):
-        """Get all data and compute advantages using GAE"""
+
         assert self.full, "Buffer not full"
         
         # Stack everything
@@ -640,7 +640,8 @@ class RolloutBuffer:
         gamma: float = 0.99,
         gae_lambda: float = 0.95
     ):
-        """Compute Generalized Advantage Estimation"""
+        """Generalized Advantage Estimation"""
+
         n_steps = rewards.shape[0]
         num_envs = rewards.shape[1]
         
@@ -668,7 +669,7 @@ def soft_update(target_net, source_net, tau):
 
 
 class BaselineAgentWrapper:
-    """Wrapper to use baseline agent in training loop"""
+    
     
     def __init__(self, env_cfg: dict, device: str = "cpu"):
         self.agent = BaselineAgent("player_1", env_cfg)
@@ -676,7 +677,7 @@ class BaselineAgentWrapper:
         self.env_cfg = env_cfg
     
     def get_actions(self, obs_raw_batch, step: int) -> torch.Tensor:
-        """Convert observations and get actions from baseline agent"""
+        
         batch_size = len(obs_raw_batch["player_1"])
         max_units = self.env_cfg["max_units"]
         
