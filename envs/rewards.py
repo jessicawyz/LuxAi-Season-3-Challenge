@@ -2,6 +2,13 @@ import numpy as np
 from typing import Dict, Tuple, Optional
 import torch
 
+try:
+    from envs.il_rewards import ILRewardShaper
+    IL_AVAILABLE = True
+except ImportError:
+    IL_AVAILABLE = False
+    print("[Rewards] IL reward module not available - IL rewards disabled")
+
 
 class LuxRewardShaper:
     
@@ -21,6 +28,9 @@ class LuxRewardShaper:
         survival_reward: float = 0.05,
         exploration_reward: float = 0.5,
         relic_discovery_reward: float = 10.0,
+        
+        # IL reward shaping
+        il_reward_shaper = None,  # Optional ILRewardShaper instance
     ):
         """
             reward_mode: "sparse" (only wins) or "dense" (wins + shaped rewards)
@@ -33,9 +43,11 @@ class LuxRewardShaper:
             survival_reward: Small constant reward per step
             exploration_reward: Reward for exploring new tiles
             relic_discovery_reward: Reward for discovering new relic nodes
+            il_reward_shaper: Optional ILRewardShaper for imitation learning rewards
         """
         
         self.reward_mode = reward_mode
+        self.il_reward_shaper = il_reward_shaper
         
         # Sparse rewards
         self.match_win_bonus = match_win_bonus
@@ -60,13 +72,34 @@ class LuxRewardShaper:
         done: bool,
         info: Dict,
         team_id: int,
+        actions: Optional[np.ndarray] = None,
+        global_step: Optional[int] = None,
     ) -> float:
+        """
+        Compute reward per team
         
+        Args:
+            obs: Current observation
+            next_obs: Next observation
+            done: Episode done flag
+            info: Info dict
+            team_id: Team ID (0 or 1)
+            actions: Optional actions for IL reward (max_units, 3)
+            global_step: Optional global step for IL annealing
+        
+        Returns:
+            reward: Total reward (environment + IL)
+        """
         ## reward per team
         if self.reward_mode == "sparse":
-            return self._compute_sparse_reward(obs, next_obs, done, info, team_id)
+            env_reward = self._compute_sparse_reward(obs, next_obs, done, info, team_id)
         else:
-            return self._compute_dense_reward(obs, next_obs, done, info, team_id)
+            env_reward = self._compute_dense_reward(obs, next_obs, done, info, team_id)
+        
+        # IL rewards are handled in the training loop for efficiency
+        # This method just returns the environment reward
+        
+        return env_reward
     
     def _compute_sparse_reward(
         self,
@@ -183,6 +216,55 @@ class LuxRewardShaper:
     def reset(self):
         
         self.prev_state = None
+    
+    def compute_il_rewards_batch(
+        self,
+        obs_batch: list,
+        team_ids: list,
+        actions_batch: np.ndarray,
+        unit_masks: np.ndarray,
+        game_params: dict,
+        global_step: Optional[int] = None,
+    ) -> Tuple[np.ndarray, Dict]:
+        """
+        Compute IL rewards for a batch of observations (for efficiency)
+        
+        Args:
+            obs_batch: List of observation dicts
+            team_ids: List of team IDs
+            actions_batch: (batch_size, max_units, 3) action arrays
+            unit_masks: (batch_size, max_units) unit validity masks
+            game_params: Game parameters dict
+            global_step: Current training step
+        
+        Returns:
+            il_rewards: (batch_size,) IL rewards
+            info: Dictionary with IL statistics
+        """
+        if self.il_reward_shaper is None:
+            # Return zeros if no IL shaper
+            return np.zeros(len(obs_batch), dtype=np.float32), {}
+        
+        il_rewards, info = self.il_reward_shaper.compute_rewards(
+            obs_batch=obs_batch,
+            team_ids=team_ids,
+            rl_actions=actions_batch,
+            unit_masks=unit_masks,
+            game_params=game_params,
+            global_step=global_step,
+        )
+        
+        return il_rewards, info
+    
+    def reset_il(self, env_idx: Optional[int] = None):
+        """Reset IL state for specific or all environments"""
+        if self.il_reward_shaper is not None:
+            self.il_reward_shaper.reset(env_idx)
+    
+    def reset_il_statistics(self):
+        """Reset IL statistics"""
+        if self.il_reward_shaper is not None:
+            self.il_reward_shaper.reset_statistics()
 
 
 class RelicMemory:

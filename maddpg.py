@@ -16,6 +16,14 @@ from eval import evaluate_and_update_pool, EvalConfig
 from baseline_agent import Agent as BaselineAgent
 from dataclasses import asdict
 
+# IL reward imports
+try:
+    from envs.il_rewards import create_il_reward_shaper
+    IL_AVAILABLE = True
+except ImportError:
+    IL_AVAILABLE = False
+    print("[MADDPG] IL reward module not available")
+
 class ConvLSTMCell(nn.Module):
     
     def __init__(self, input_dim: int, hidden_dim: int, kernel_size: int = 3):
@@ -172,7 +180,7 @@ class MADDPGConfig:
     total_timesteps: int = 10_000_000
     learning_rate_actor: float = 1e-4
     learning_rate_critic: float = 3e-4
-    buffer_size: int = 100_000
+    buffer_size: int = 1000
     batch_size: int = 256
     gamma: float = 0.99
     tau: float = 0.005  
@@ -190,8 +198,8 @@ class MADDPGConfig:
     spatial_channels: int = 23 
     unit_feature_dim: int = 10
     global_feature_dim: int = 12
-    hidden_dim: int = 256
-    convlstm_hidden_dim: int = 128
+    hidden_dim: int = 64
+    convlstm_hidden_dim: int = 32
     transformer_heads: int = 4
     transformer_layers: int = 2
     
@@ -213,6 +221,19 @@ class MADDPGConfig:
     use_baseline_opponent: bool = False  # Use baseline agent instead of selfplay 
     max_pool_size: int = 20
     elo_k_factor: float = 32.0
+    
+    # IL reward parameters
+    use_il_reward: bool = False
+    il_model_path: str = "checkpoint/unit_unet.pth"
+    il_reward_weight: float = 0.1  # lambda
+    il_reward_bonus: float = 0.1   # bonus per matching action
+    il_reward_penalty: float = 0.1  # penalty per mismatched action
+    il_reward_anneal: bool = True
+    il_reward_anneal_start: float = 0.5
+    il_reward_anneal_end: float = 0.05
+    il_reward_anneal_steps: int = 500_000
+    il_compare_sap_targets: bool = False  # Compare SAP targets (needs SAP-UNet)
+    target_il_agreement_rate: float = 0.6
     
     
     log_freq: int = 1000
@@ -583,6 +604,32 @@ def train_maddpg(config: MADDPGConfig):
         baseline_wrapper = BaselineAgentWrapper(env_cfg, device=config.device)
         print("Initialized baseline agent as opponent")
     
+    # Initialize IL reward shaper if enabled
+    il_reward_shaper = None
+    if config.use_il_reward:
+        print(f"Initializing IL reward shaper...")
+        try:
+            il_reward_shaper = create_il_reward_shaper(
+                il_model_path=config.il_model_path,
+                num_envs=config.num_envs,
+                device=config.device,
+                bonus_per_match=config.il_reward_bonus,
+                penalty_per_mismatch=config.il_reward_penalty,
+                weight=config.il_reward_weight,
+                anneal=config.il_reward_anneal,
+                anneal_start=config.il_reward_anneal_start,
+                anneal_end=config.il_reward_anneal_end,
+                anneal_steps=config.il_reward_anneal_steps,
+                compare_sap_targets=config.il_compare_sap_targets,
+                map_size=config.map_width,
+                max_units=config.max_units,
+            )
+            print(f"IL reward shaper initialized successfully")
+        except Exception as e:
+            print(f"Warning: Failed to initialize IL reward shaper: {e}")
+            print(f"Continuing without IL rewards")
+            config.use_il_reward = False
+    
     
     actor_0 = MADDPGActor(config).to(config.device)
     actor_1 = MADDPGActor(config).to(config.device)
@@ -726,6 +773,72 @@ def train_maddpg(config: MADDPGConfig):
         
         next_obs, rewards, dones, truncated, infos = env.step(actions_dict, seed=global_step)
         
+        # Compute IL rewards if enabled
+        il_rewards_0 = torch.zeros(config.num_envs, device=config.device)
+        il_rewards_1 = torch.zeros(config.num_envs, device=config.device)
+        il_info = {}
+        
+        if config.use_il_reward and il_reward_shaper is not None:
+            try:
+                # Extract raw observations from vectorized environment
+                if hasattr(env, 'prev_obs_raw') and env.prev_obs_raw is not None:
+                    # Convert JAX observations to list of dicts per environment
+                    raw_obs_batch = []
+                    for i in range(config.num_envs):
+                        # Extract single environment observation
+                        obs_single = jax.tree.map(lambda x: x[i], env.prev_obs_raw)
+                        # Convert to numpy
+                        obs_single = jax.tree.map(lambda x: np.array(x), obs_single)
+                        raw_obs_batch.append(obs_single)
+                    
+                    # Compute IL rewards for team 0
+                    obs_team_0 = [asdict(o["player_0"]) for o in raw_obs_batch]
+                    actions_team_0 = actions_0.cpu().numpy()
+                    unit_masks_0 = obs["team_0"]["unit_mask"].cpu().numpy()
+                    
+                    game_params = {
+                        "max_units": config.max_units,
+                        "unit_move_cost": env.env_params.unit_move_cost,
+                        "unit_sap_cost": env.env_params.unit_sap_cost,
+                        "unit_sap_range": env.env_params.unit_sap_range,
+                        "unit_sensor_range": env.env_params.unit_sensor_range,
+                        "nebula_tile_energy_reduction": env.env_params.nebula_tile_energy_reduction,
+                        "unit_sap_dropoff_factor": env.env_params.unit_sap_dropoff_factor,
+                        "unit_energy_void_factor": env.env_params.unit_energy_void_factor,
+                    }
+                    
+                    il_r0, il_i0 = il_reward_shaper.compute_rewards(
+                        obs_batch=obs_team_0,
+                        team_ids=[0] * config.num_envs,
+                        rl_actions=actions_team_0,
+                        unit_masks=unit_masks_0,
+                        game_params=game_params,
+                        global_step=global_step,
+                    )
+                    il_rewards_0 = torch.from_numpy(il_r0).float().to(config.device)
+                    il_info.update({f"team_0_{k}": v for k, v in il_i0.items()})
+                    
+                    # Compute IL rewards for team 1
+                    obs_team_1 = [asdict(o["player_1"]) for o in raw_obs_batch]
+                    actions_team_1 = actions_1.cpu().numpy()
+                    unit_masks_1 = obs["team_1"]["unit_mask"].cpu().numpy()
+                    
+                    il_r1, il_i1 = il_reward_shaper.compute_rewards(
+                        obs_batch=obs_team_1,
+                        team_ids=[1] * config.num_envs,
+                        rl_actions=actions_team_1,
+                        unit_masks=unit_masks_1,
+                        game_params=game_params,
+                        global_step=global_step,
+                    )
+                    il_rewards_1 = torch.from_numpy(il_r1).float().to(config.device)
+                    il_info.update({f"team_1_{k}": v for k, v in il_i1.items()})
+            
+            except Exception as e:
+                print(f"Warning: IL reward computation failed: {e}")
+                import traceback
+                traceback.print_exc()
+        
         global_step += config.num_envs
         
         
@@ -734,6 +847,17 @@ def train_maddpg(config: MADDPGConfig):
             next_obs_single = {k: {kk: v[i] for kk, v in next_obs[k].items()} for k in next_obs.keys()}
             actions_single = {k: v[i] for k, v in actions_dict.items()}
             rewards_single = rewards[i]
+            
+            # Add IL rewards to this environment's rewards
+            if config.use_il_reward and il_reward_shaper is not None:
+                # rewards_single is a tensor [player_0_reward, player_1_reward]
+                il_reward_add = torch.tensor(
+                    [il_rewards_0[i].item(), il_rewards_1[i].item()],
+                    dtype=rewards_single.dtype,
+                    device=rewards_single.device
+                )
+                rewards_single = rewards_single + il_reward_add
+            
             done_single = dones[i]
             
             replay_buffer.add(obs_single, actions_single, rewards_single, next_obs_single, done_single)
@@ -742,6 +866,10 @@ def train_maddpg(config: MADDPGConfig):
             
             if done_single:
                 episode_rewards[i] = 0.0
+                
+                # Reset IL state for this environment
+                if config.use_il_reward and il_reward_shaper is not None:
+                    il_reward_shaper.reset(env_idx=i)
         
         obs = next_obs
         
@@ -881,6 +1009,15 @@ def train_maddpg(config: MADDPGConfig):
                 log_msg += " | Opponent: Baseline"
             elif use_opponent and current_opponent:
                 log_msg += f" | Opponent ELO {current_opponent.elo_rating:.1f}"
+            
+            # Add IL statistics if available
+            if config.use_il_reward and il_info:
+                # Average across teams
+                il_agreement = (il_info.get("team_0_il_agreement_rate", 0) + 
+                               il_info.get("team_1_il_agreement_rate", 0)) / 2
+                il_weight = il_info.get("team_0_il_weight", 0)
+                log_msg += f" | IL Agree {il_agreement:.2%} | IL λ {il_weight:.3f}"
+            
             print(log_msg)
         
         # Evaluation and checkpoint management
@@ -1021,6 +1158,18 @@ if __name__ == "__main__":
     parser.add_argument("--eval-freq", type=int, default=50_000, help="Evaluation frequency (steps)")
     parser.add_argument("--log-freq", type=int, default=1000, help="Log frequency (steps)")
     
+    # IL reward arguments
+    parser.add_argument("--use-il-reward", action="store_true", help="Enable IL reward shaping")
+    parser.add_argument("--il-model-path", type=str, default="checkpoint/unit_unet.pth", help="Path to IL model")
+    parser.add_argument("--il-reward-weight", type=float, default=0.1, help="IL reward weight (lambda)")
+    parser.add_argument("--il-reward-bonus", type=float, default=0.1, help="Bonus per matching action")
+    parser.add_argument("--il-reward-penalty", type=float, default=0.1, help="Penalty per mismatched action")
+    parser.add_argument("--il-reward-anneal", action="store_true", default=True, help="Anneal IL weight")
+    parser.add_argument("--il-reward-anneal-start", type=float, default=0.5, help="IL anneal start weight")
+    parser.add_argument("--il-reward-anneal-end", type=float, default=0.05, help="IL anneal end weight")
+    parser.add_argument("--il-reward-anneal-steps", type=int, default=500_000, help="IL anneal steps")
+    parser.add_argument("--il-compare-sap-targets", action="store_true", help="Compare SAP targets")
+    
     args = parser.parse_args()
     
     config = MADDPGConfig(
@@ -1046,6 +1195,17 @@ if __name__ == "__main__":
         snapshot_freq=args.snapshot_freq,
         eval_freq=args.eval_freq,
         log_freq=args.log_freq,
+        # IL reward parameters
+        use_il_reward=args.use_il_reward,
+        il_model_path=args.il_model_path,
+        il_reward_weight=args.il_reward_weight,
+        il_reward_bonus=args.il_reward_bonus,
+        il_reward_penalty=args.il_reward_penalty,
+        il_reward_anneal=args.il_reward_anneal,
+        il_reward_anneal_start=args.il_reward_anneal_start,
+        il_reward_anneal_end=args.il_reward_anneal_end,
+        il_reward_anneal_steps=args.il_reward_anneal_steps,
+        il_compare_sap_targets=args.il_compare_sap_targets,
     )
     
     train_maddpg(config)

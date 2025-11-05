@@ -85,6 +85,9 @@ class ILWrapper:
         
         # Track if we need to reset state on next update
         self.needs_reset = [{0: True, 1: True} for _ in range(num_envs)]
+        
+        # Track environments where State sync failed (to avoid spam warnings)
+        self._skipped_envs = set()
     
     def reset(self, env_idx: Optional[int] = None):
         """Reset state for specific environment or all environments"""
@@ -99,11 +102,13 @@ class ILWrapper:
             self.previous_step_opp_ships[env_idx][0].clear()
             self.previous_step_opp_ships[env_idx][1].clear()
             self.needs_reset[env_idx] = {0: True, 1: True}
+            # Clear skipped flag - allow retry after reset
+            self._skipped_envs.discard(env_idx)
         else:
             for i in range(self.num_envs):
                 self.reset(i)
     
-    def _convert_to_state_obs(self, obs: Dict, team_id: int) -> Dict:
+    def _convert_to_state_obs(self, obs: Dict, team_id: int, state: 'State') -> Dict:
         """Convert vectorized obs dict to format expected by State class"""
         # This mimics convert_episode_step from convert_episodes.py
         sensor_mask = np.array(obs["sensor_mask"], dtype=np.int8)
@@ -157,8 +162,8 @@ class ILWrapper:
                     units_position[t].append([-1, -1])
         
         state_obs = {
-            "steps": int(obs.get("steps", 0)),
-            "match_steps": int(obs.get("match_steps", 0)),
+            "steps": state.global_step,  # Use State's own step counter, not env step
+            "match_steps": state.match_step,
             "team_wins": [int(obs["team_wins"][0]), int(obs["team_wins"][1])],
             "team_points": [int(obs["team_points"][0]), int(obs["team_points"][1])],
             "sensor_mask": sensor_mask,
@@ -353,6 +358,16 @@ class ILWrapper:
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Get IL predictions for batch of observations
+        
+        Args:
+            obs_batch: List of observation dicts (one per env)
+            team_ids: List of team IDs (one per env)
+            game_params: Game parameters dict
+            rl_actions: Optional RL actions for history update (num_envs, max_units, 3)
+        
+        Returns:
+            il_actions: (num_envs, max_units, 3) - action_type, sap_dx, sap_dy
+            il_agreement_mask: (num_envs, max_units) - bool mask for valid predictions
         """
         batch_size = len(obs_batch)
         
@@ -379,8 +394,23 @@ class ILWrapper:
                 self.previous_step_sap[env_idx][team_id][:] = 0
             
             # Convert obs and update state
-            state_obs = self._convert_to_state_obs(obs, team_id)
-            state.update(state_obs)
+            state_obs = self._convert_to_state_obs(obs, team_id, state)
+            
+            # Try to update state
+            try:
+                state.update(state_obs)
+                
+            except (AssertionError, Exception) as e:
+                # State update failed (likely step mismatch) - skip IL for this env
+                # This happens when State's internal counters can't sync with current env step
+                if env_idx not in self._skipped_envs:
+                    print(f"[IL Wrapper] Warning: Skipping env {env_idx} team {team_id} - State sync failed: {e}")
+                    print(f"state global_steps {state_obs['steps']}")
+                    print(f"state match_steps {state_obs['match_steps']}")
+                    print(f"IL    global_steps {state.global_step}")
+                    print(f"IL    match_steps {state.match_step}")
+                    self._skipped_envs.add(env_idx)
+                continue
             
             # Build features
             features, gf = self._build_features(state, env_idx, team_id, game_params)
@@ -397,29 +427,43 @@ class ILWrapper:
             if rl_actions is not None:
                 self._update_history(state, env_idx, team_id, features, rl_actions[env_idx])
         
+        # Handle empty batch (all envs skipped)
+        if len(states_batch) == 0:
+            print("[IL Wrapper] Warning: All environments skipped - no IL predictions")
+            il_actions = np.zeros((batch_size, self.max_units, 3), dtype=np.int32)
+            il_agreement_mask = np.zeros((batch_size, self.max_units), dtype=bool)
+            return il_actions, il_agreement_mask
+        
         # Convert to tensors
+        actual_batch_size = len(states_batch)
         states_tensor = torch.from_numpy(np.stack(states_batch)).float().to(self.device)
         
         # GF needs to be (B, 17, 3, 3) for the model
-        gfs_array = np.stack(gfs_batch)  # (B, 17)
-        gfs_tensor = torch.zeros((batch_size, 17, 3, 3), dtype=torch.float32, device=self.device)
+        gfs_array = np.stack(gfs_batch)  # (actual_batch_size, 17)
+        gfs_tensor = torch.zeros((actual_batch_size, 17, 3, 3), dtype=torch.float32, device=self.device)
         for i in range(17):
             gfs_tensor[:, i, :, :] = torch.from_numpy(gfs_array[:, i:i+1]).float()
         
         # Run IL model
         with torch.no_grad():
-            logits = self.model(states_tensor, gfs_tensor)  # (B, 6, H, W)
+            logits = self.model(states_tensor, gfs_tensor)  # (actual_batch_size, 6, H, W)
             probs = torch.softmax(logits, dim=1)
-            action_types = torch.argmax(probs, dim=1)  # (B, H, W)
+            action_types = torch.argmax(probs, dim=1)  # (actual_batch_size, H, W)
         
         action_types_np = action_types.cpu().numpy()
         
         # Convert position-based predictions to unit-based actions
+        # Initialize outputs for ALL environments (not just valid ones)
         il_actions = np.zeros((batch_size, self.max_units, 3), dtype=np.int32)
         il_agreement_mask = np.zeros((batch_size, self.max_units), dtype=bool)
         
-        for env_idx, team_id in enumerate(team_ids):
+        # Fill in predictions only for valid environments
+        for batch_idx, (env_idx, team_id) in enumerate(zip(valid_envs, [team_ids[i] for i in valid_envs])):
             state = self.states[env_idx][team_id]
+            if state is None:
+                # State is None - skip this environment
+                continue
+            
             obs = obs_batch[env_idx]
             
             # Get unit positions
@@ -431,8 +475,8 @@ class ILWrapper:
                         unit_positions[pos] = []
                     unit_positions[pos].append((i, unit.energy))
             
-            # Get IL predictions for each position
-            action_map = action_types_np[env_idx]
+            # Get IL predictions for each position (use batch_idx, not env_idx)
+            action_map = action_types_np[batch_idx]
             
             # Handle team_id == 1 mirroring back
             if team_id == 1:
