@@ -8,6 +8,7 @@ from torch import nn
 from tqdm import tqdm
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
+import matplotlib.pyplot as plt
 
 from agent.base import SPACE_SIZE, transpose
 from agent.path import ActionType
@@ -318,6 +319,19 @@ def get_acc(outs, actions, mask, label_to_acc):
 
     return correct, total
 
+def plot_loss(losses, save_path = None):
+    plt.figure(figsize = (6,4))
+    plt.plot(range(1, len(losses) + 1), losses)
+    plt.xlabel('Epoch')
+    plt.ylabel('Average Loss')
+    plt.title('Training Loss (per epoch)')
+    plt.grid(True)
+    if save_path:
+        plt.savefig(save_path, bbox_inches = "tight")
+        print(f"Loss plot saved to: {save_path}")
+    else:
+        plt.show()
+    plt.close()
 
 def train_model(
     model,
@@ -341,6 +355,7 @@ def train_model(
         num_workers=0,
     )
 
+    running_loss = []
     for epoch in range(num_epochs):
         model.to(device)
 
@@ -417,6 +432,8 @@ def train_model(
             print(
                 f"Epoch {epoch + 1}/{num_epochs} | {phase:^5} | Loss: {epoch_loss:.5f} | Acc: {epoch_acc:.4f}"
             )
+        
+            running_loss.append(epoch_loss)
 
         if val_loss < best_loss:
             traced = torch.jit.trace(
@@ -430,7 +447,9 @@ def train_model(
             print(f"Saving model to `{model_path}`.")
             traced.save(model_path)
             best_loss = val_loss
-
+    # Save the epoch loss and use plot_loss to plot the graph
+    plot_path = f"{model_name}_training_loss.png"
+    plot_loss(running_loss, save_path=plot_path)
 
 def main(submission_ids, min_opp_score):
     train_episodes, val_episodes = select_episodes(submission_ids, min_opp_score)
@@ -452,7 +471,7 @@ def main(submission_ids, min_opp_score):
         optimizer,
         scheduler,
         weights,
-        num_epochs=50, # 20
+        num_epochs=10, 
         model_name=MODEL_NAME,
     )
 

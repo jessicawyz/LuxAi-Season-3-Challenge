@@ -426,11 +426,11 @@ def main(submission_ids, min_opp_score):
         optimizer,
         scheduler,
         weights,
-        num_epochs=50, #20 for the default model
+        num_epochs=50,
         model_name=MODEL_NAME,
     )
 
-# if __name__ == "__main__":
-#     submission_ids = [42613059, 42613183] # Try to train on Flat Neurons and Frog Parade episodes as these are top winners
-#     min_opp_score = 647 # Ensure that their opponent is also as good, so that the episodes are significant to be learnt from 
-#     main(submission_ids, min_opp_score)
+if __name__ == "__main__":
+    submission_ids = [42613059, 42596204] # Try to train on Flat Neurons and Frog Parade episodes as these are top winners
+    min_opp_score = 647 
+    main(submission_ids, min_opp_score)
