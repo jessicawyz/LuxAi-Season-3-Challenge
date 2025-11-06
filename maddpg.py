@@ -1023,9 +1023,10 @@ def train_maddpg(config: MADDPGConfig):
         
         # Logging
         if global_step % config.log_freq == 0:
+            mean_reward = np.mean(episode_rewards)
+            
             reward_history.append(mean_reward) # Tracking
 
-            mean_reward = np.mean(episode_rewards)
             elapsed = (time.time() - start_time) / 60
             log_msg = f"[{elapsed:.2f} min] Step {global_step} | Epsilon {epsilon:.3f} | Mean Reward {mean_reward:.2f} | Buffer {len(replay_buffer)}"
             if config.use_baseline_opponent:
