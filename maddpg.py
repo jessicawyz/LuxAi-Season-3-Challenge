@@ -16,6 +16,9 @@ from eval import evaluate_and_update_pool, EvalConfig
 from baseline_agent import Agent as BaselineAgent
 from dataclasses import asdict
 
+import matplotlib.pyplot as plt
+plt.close('all')
+
 # IL reward imports
 try:
     from envs.il_rewards import create_il_reward_shaper
@@ -565,6 +568,14 @@ class BaselineAgentWrapper:
         
         return actions_tensor
 
+def exponential_smooth(data, alpha=0.1):
+    """Apply exponential smoothing to data"""
+    if len(data) == 0:
+        return []
+    smoothed = [data[0]]
+    for i in range(1, len(data)):
+        smoothed.append(alpha * data[i] + (1 - alpha) * smoothed[-1])
+    return smoothed
 
 def train_maddpg(config: MADDPGConfig):
     
@@ -661,6 +672,12 @@ def train_maddpg(config: MADDPGConfig):
     # State tracking
     global_step = 0
     episode_rewards = [0.0 for _ in range(config.num_envs)]
+    best_elo = -float('inf')
+
+    # Tracking
+    reward_history = []
+    actor_loss_history = []
+    critic_loss_history = []
     best_elo = -float('inf')
     
     # Opponent actors (for self-play mode)
@@ -949,7 +966,8 @@ def train_maddpg(config: MADDPGConfig):
                     nn.utils.clip_grad_norm_(critic.parameters(), 1.0)
                     critic_opt.step()
                     
-                    
+                    if team_id == 0:
+                        critic_loss_history.append(critic_loss.item()) # Tracking
                     
                     curr_actions_team, _, _ = actor(
                         spatial_features=obs_batch[f"team_{team_id}"]["spatial_features"],
@@ -991,6 +1009,9 @@ def train_maddpg(config: MADDPGConfig):
                     actor_loss.backward()
                     nn.utils.clip_grad_norm_(actor.parameters(), 1.0)
                     actor_opt.step()
+
+                    if team_id == 0:
+                        actor_loss_history.append(actor_loss.item()) # Tracking
                 
                 
                 if global_step % config.target_update_frequency == 0:
@@ -1002,6 +1023,8 @@ def train_maddpg(config: MADDPGConfig):
         
         # Logging
         if global_step % config.log_freq == 0:
+            reward_history.append(mean_reward) # Tracking
+
             mean_reward = np.mean(episode_rewards)
             elapsed = (time.time() - start_time) / 60
             log_msg = f"[{elapsed:.2f} min] Step {global_step} | Epsilon {epsilon:.3f} | Mean Reward {mean_reward:.2f} | Buffer {len(replay_buffer)}"
@@ -1104,6 +1127,55 @@ def train_maddpg(config: MADDPGConfig):
             torch.save(checkpoint, snapshot_path)
             print(f"Saved snapshot checkpoint at step {global_step}")
     
+    # Plot training metrics
+    print("\nGenerating training plots...")
+    timestamp = int(time.time())
+    
+    fig, axes = plt.subplots(3, 1, figsize=(15, 10))
+    
+    # Reward history
+    if reward_history:
+        smoothed_rewards = exponential_smooth(reward_history, alpha=0.1)
+        axes[0, 0].plot(reward_history, color='tab:orange', linewidth=1, alpha=0.6, label='Raw')
+        axes[0, 0].plot(smoothed_rewards, color='tab:blue', linewidth=3, label='Smoothed')
+        axes[0, 0].set_title('Reward History')
+        axes[0, 0].set_xlabel('Log Step')
+        axes[0, 0].set_ylabel('Mean Reward')
+        axes[0, 0].grid(True)
+        axes[0, 0].legend(loc='upper left')
+    
+    # Actor loss history
+    if actor_loss_history:
+        smoothed_actor_loss = exponential_smooth(actor_loss_history, alpha=0.1)
+        axes[0, 1].plot(actor_loss_history, color='tab:orange', linewidth=1, alpha=0.6, label='Raw')
+        axes[0, 1].plot(smoothed_actor_loss, color='tab:blue', linewidth=3, label='Smoothed')
+        axes[0, 1].set_title('Actor Loss History')
+        axes[0, 1].set_xlabel('Gradient Step')
+        axes[0, 1].set_ylabel('Actor Loss')
+        axes[0, 1].grid(True)
+        axes[0, 1].legend(loc='upper left')
+    
+    # Critic loss history
+    if critic_loss_history:
+        smoothed_critic_loss = exponential_smooth(critic_loss_history, alpha=0.1)
+        axes[1, 0].plot(critic_loss_history, color='tab:orange', linewidth=1, alpha=0.6, label='Raw')
+        axes[1, 0].plot(smoothed_critic_loss, color='tab:blue', linewidth=3, label='Smoothed')
+        axes[1, 0].set_title('Critic Loss History')
+        axes[1, 0].set_xlabel('Gradient Step')
+        axes[1, 0].set_ylabel('Critic Loss')
+        axes[1, 0].grid(True)
+        axes[1, 0].legend(loc='upper left')
+    
+    # Hide the 4th subplot (no entropy for MADDPG)
+    axes[1, 1].axis('off')
+    axes[1, 1].text(0.5, 0.5, 'No entropy term in MADDPG', 
+                    ha='center', va='center', fontsize=12, transform=axes[1, 1].transAxes)
+    
+    plt.tight_layout()
+    plot_filename = f'{timestamp}.png'
+    plt.savefig(plot_filename, dpi=150, bbox_inches='tight')
+    print(f"Training plots saved to {plot_filename}")
+    plt.close()
     
     # Save final checkpoint
     final_checkpoint = {

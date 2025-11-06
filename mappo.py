@@ -17,6 +17,9 @@ from eval import evaluate_and_update_pool, EvalConfig
 from baseline_agent import Agent as BaselineAgent
 from dataclasses import asdict
 
+import matplotlib.pyplot as plt
+plt.close('all')
+
 # IL reward imports
 try:
     from envs.il_rewards import create_il_reward_shaper
@@ -707,6 +710,15 @@ class BaselineAgentWrapper:
         return actions_tensor
 
 
+def exponential_smooth(data, alpha=0.1):
+    """Apply exponential smoothing to data"""
+    if len(data) == 0:
+        return []
+    smoothed = [data[0]]
+    for i in range(1, len(data)):
+        smoothed.append(alpha * data[i] + (1 - alpha) * smoothed[-1])
+    return smoothed
+
 def train_mappo(config: MAPPOConfig):
     
     os.makedirs(config.checkpoint_dir, exist_ok=True)
@@ -797,6 +809,12 @@ def train_mappo(config: MAPPOConfig):
     current_opponent = None
     opponent_actor_0 = None
     opponent_actor_1 = None
+
+    # Tracking metrics for plotting
+    reward_history = []
+    actor_loss_history = []
+    critic_loss_history = []
+    entropy_history = []
     
     start_time = time.time()
     
@@ -1053,9 +1071,13 @@ def train_mappo(config: MAPPOConfig):
         advantages_1, returns_1 = rollout_buffer_1.get(last_values)
         
         # === PPO updates ===
+        epoch_actor_losses = []
+        epoch_critic_losses = []
+        epoch_entropy_values = []
+
         for epoch in range(config.n_epochs):
             # Update actor 0 and critic 0
-            update_ppo(
+            actor_loss_0, critic_loss_0, entropy_0 = update_ppo(
                 actor_0, critic_0,
                 actor_0_optimizer, critic_0_optimizer,
                 rollout_buffer_0,
@@ -1064,10 +1086,13 @@ def train_mappo(config: MAPPOConfig):
                 config,
                 team_id=0
             )
+            epoch_actor_losses.append(actor_loss_0)
+            epoch_critic_losses.append(critic_loss_0)
+            epoch_entropy_values.append(entropy_0)
             
             # Update actor 1 and critic 1 (skip if using baseline)
             if not config.use_baseline_opponent:
-                update_ppo(
+                actor_loss_1, critic_loss_1, entropy_1 = update_ppo(
                     actor_1, critic_1,
                     actor_1_optimizer, critic_1_optimizer,
                     rollout_buffer_1,
@@ -1076,7 +1101,16 @@ def train_mappo(config: MAPPOConfig):
                     config,
                     team_id=1
                 )
-        
+                epoch_actor_losses.append(actor_loss_1)
+                epoch_critic_losses.append(critic_loss_1)
+                epoch_entropy_values.append(entropy_1)
+
+        # Track metrics
+        reward_history.append(np.mean(episode_rewards))
+        actor_loss_history.append(np.mean(epoch_actor_losses))
+        critic_loss_history.append(np.mean(epoch_critic_losses))
+        entropy_history.append(np.mean(epoch_entropy_values))
+
         # Logging
         if global_step % config.log_freq == 0:
             mean_reward = np.mean(episode_rewards)
@@ -1181,6 +1215,62 @@ def train_mappo(config: MAPPOConfig):
             torch.save(checkpoint, snapshot_path)
             print(f"Saved snapshot checkpoint at step {global_step}")
     
+    # Plot training metrics
+    print("\nGenerating training plots...")
+    timestamp = int(time.time())
+    
+    fig, axes = plt.subplots(3, 1, figsize=(15, 10))
+    
+    # Reward history
+    if reward_history:
+        smoothed_rewards = exponential_smooth(reward_history, alpha=0.1)
+        axes[0, 0].plot(reward_history, color='tab:orange', linewidth=1, alpha=0.6, label='Raw')
+        axes[0, 0].plot(smoothed_rewards, color='tab:blue', linewidth=3, label='Smoothed')
+        axes[0, 0].set_title('Reward History')
+        axes[0, 0].set_xlabel('Update Step')
+        axes[0, 0].set_ylabel('Mean Reward')
+        axes[0, 0].grid(True)
+        axes[0, 0].legend(loc='upper left')
+    
+    # Actor loss history
+    if actor_loss_history:
+        smoothed_actor_loss = exponential_smooth(actor_loss_history, alpha=0.1)
+        axes[0, 1].plot(actor_loss_history, color='tab:orange', linewidth=1, alpha=0.6, label='Raw')
+        axes[0, 1].plot(smoothed_actor_loss, color='tab:blue', linewidth=3, label='Smoothed')
+        axes[0, 1].set_title('Actor Loss History')
+        axes[0, 1].set_xlabel('Update Step')
+        axes[0, 1].set_ylabel('Actor Loss')
+        axes[0, 1].grid(True)
+        axes[0, 1].legend(loc='upper left')
+    
+    # Critic loss history
+    if critic_loss_history:
+        smoothed_critic_loss = exponential_smooth(critic_loss_history, alpha=0.1)
+        axes[1, 0].plot(critic_loss_history, color='tab:orange', linewidth=1, alpha=0.6, label='Raw')
+        axes[1, 0].plot(smoothed_critic_loss, color='tab:blue', linewidth=3, label='Smoothed')
+        axes[1, 0].set_title('Critic Loss History')
+        axes[1, 0].set_xlabel('Update Step')
+        axes[1, 0].set_ylabel('Critic Loss')
+        axes[1, 0].grid(True)
+        axes[1, 0].legend(loc='upper left')
+    
+    # Entropy history
+    if entropy_history:
+        smoothed_entropy = exponential_smooth(entropy_history, alpha=0.1)
+        axes[1, 1].plot(entropy_history, color='tab:orange', linewidth=1, alpha=0.6, label='Raw')
+        axes[1, 1].plot(smoothed_entropy, color='tab:blue', linewidth=3, label='Smoothed')
+        axes[1, 1].set_title('Entropy Objective History')
+        axes[1, 1].set_xlabel('Update Step')
+        axes[1, 1].set_ylabel('Entropy')
+        axes[1, 1].grid(True)
+        axes[1, 1].legend(loc='upper left')
+    
+    plt.tight_layout()
+    plot_filename = f'{timestamp}.png'
+    plt.savefig(plot_filename, dpi=150, bbox_inches='tight')
+    print(f"Training plots saved to {plot_filename}")
+    plt.close()
+
     # Save final checkpoint
     final_checkpoint = {
         "actor_0": actor_0.state_dict(),
@@ -1213,6 +1303,11 @@ def update_ppo(
     team_id
 ):
     """Perform one PPO update"""
+
+    # Tracking
+    actor_losses = []
+    critic_losses = []
+    entropy_values = []
     
     # Flatten data
     n_steps = config.n_steps
@@ -1286,9 +1381,11 @@ def update_ppo(
         surr1 = ratio * batch_advantages
         surr2 = torch.clamp(ratio, 1.0 - config.clip_range, 1.0 + config.clip_range) * batch_advantages
         actor_loss = -torch.min(surr1, surr2).mean()
+        actor_losses.append(actor_loss.item()) # Tracking
         
         # Entropy loss
         entropy_loss = -entropy
+        entropy_values.append(entropy.mean().item()) # Tracking
         
         # Total actor loss
         total_actor_loss = actor_loss + config.ent_coef * entropy_loss
@@ -1327,10 +1424,18 @@ def update_ppo(
             value_loss = F.mse_loss(new_values, batch_returns)
         
         # Update critic
+        critic_losses.append(value_loss.item()) # Tracking
         critic_optimizer.zero_grad()
         (config.vf_coef * value_loss).backward()
         nn.utils.clip_grad_norm_(critic.parameters(), config.max_grad_norm)
         critic_optimizer.step()
+
+    # Return average losses
+    return (
+        np.mean(actor_losses) if actor_losses else 0.0,
+        np.mean(critic_losses) if critic_losses else 0.0,
+        np.mean(entropy_values) if entropy_values else 0.0
+    )
 
 
 if __name__ == "__main__":
