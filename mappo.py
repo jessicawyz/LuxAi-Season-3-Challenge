@@ -1223,7 +1223,7 @@ def train_mappo(config: MAPPOConfig):
     print("\nGenerating training plots...")
     timestamp = int(time.time())
     
-    fig, axes = plt.subplots(3, 1, figsize=(15, 10))
+    fig, axes = plt.subplots(4, 1, figsize=(9, 15))
     
     # Reward history
     if reward_history:
@@ -1259,15 +1259,15 @@ def train_mappo(config: MAPPOConfig):
         axes[2].legend(loc='upper left')
     
     # Entropy history
-    # if entropy_history:
-    #     smoothed_entropy = exponential_smooth(entropy_history, alpha=0.1)
-    #     axes[3].plot(entropy_history, color='tab:orange', linewidth=1, alpha=0.6, label='Raw')
-    #     axes[3].plot(smoothed_entropy, color='tab:blue', linewidth=3, label='Smoothed')
-    #     axes[3].set_title('Entropy Objective History')
-    #     axes[3].set_xlabel('Update Step')
-    #     axes[3].set_ylabel('Entropy')
-    #     axes[3].grid(True)
-    #     axes[3].legend(loc='upper left')
+    if entropy_history:
+        smoothed_entropy = exponential_smooth(entropy_history, alpha=0.1)
+        axes[3].plot(entropy_history, color='tab:orange', linewidth=1, alpha=0.6, label='Raw')
+        axes[3].plot(smoothed_entropy, color='tab:blue', linewidth=3, label='Smoothed')
+        axes[3].set_title('Entropy Objective History')
+        axes[3].set_xlabel('Update Step')
+        axes[3].set_ylabel('Entropy')
+        axes[3].grid(True)
+        axes[3].legend(loc='upper left')
     
     plt.tight_layout()
     plot_filename = f'{timestamp}.png'

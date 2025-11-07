@@ -1134,8 +1134,10 @@ def train_maddpg(config: MADDPGConfig):
     print("\nGenerating training plots...")
     timestamp = int(time.time())
     
-    fig, axes = plt.subplots(3, 1, figsize=(15, 10))
-    
+    fig, axes = plt.subplots(3, 1, figsize=(9, 15))
+    print(reward_history)
+    print(actor_loss_history)
+    print(critic_loss_history)
     # Reward history
     if reward_history:
         smoothed_rewards = exponential_smooth(reward_history, alpha=0.1)
@@ -1170,7 +1172,7 @@ def train_maddpg(config: MADDPGConfig):
         axes[2].legend(loc='upper left')
     
     plt.tight_layout()
-    plot_filename = f'{timestamp}.png'
+    plot_filename = f'maddpg_{timestamp}.png'
     plt.savefig(plot_filename, dpi=150, bbox_inches='tight')
     print(f"Training plots saved to {plot_filename}")
     plt.close()
