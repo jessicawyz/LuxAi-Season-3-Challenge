@@ -804,7 +804,9 @@ def train_mappo(config: MAPPOConfig):
     
     # Tracking
     global_step = 0
-    episode_rewards = np.zeros(config.num_envs)
+    episode_rewards = np.zeros(config.num_envs, 2)
+    
+    # Opponent actors (for self-play mode)
     best_elo = -np.inf
     current_opponent = None
     opponent_actor_0 = None
@@ -1034,9 +1036,11 @@ def train_mappo(config: MAPPOConfig):
             
             # Track rewards
             for i in range(config.num_envs):
-                episode_rewards[i] += rewards[i].sum().item()
+                episode_rewards[i, 0] += rewards[i][0].item()  # Team 0
+                episode_rewards[i, 1] += rewards[i][1].item()  # Team 1
                 if dones[i]:
-                    episode_rewards[i] = 0.0
+                    episode_rewards[i, 0] = 0.0
+                    episode_rewards[i, 1] = 0.0
                     
                     # Reset IL state for this environment
                     if config.use_il_reward and il_reward_shaper is not None:
@@ -1106,14 +1110,14 @@ def train_mappo(config: MAPPOConfig):
                 epoch_entropy_values.append(entropy_1)
 
         # Track metrics
-        reward_history.append(np.mean(episode_rewards))
+        reward_history.append(np.mean(episode_rewards[:, 0]))  # Track team 0 only
         actor_loss_history.append(np.mean(epoch_actor_losses))
         critic_loss_history.append(np.mean(epoch_critic_losses))
         entropy_history.append(np.mean(epoch_entropy_values))
 
         # Logging
         if global_step % config.log_freq == 0:
-            mean_reward = np.mean(episode_rewards)
+            mean_reward = np.mean(episode_rewards[:, 0])  # Team 0 mean
             elapsed = (time.time() - start_time) / 60
             log_msg = f"[{elapsed:.2f} min] Step {global_step} | Epsilon {epsilon:.3f} | Mean Reward {mean_reward:.2f}"
             if config.use_baseline_opponent:

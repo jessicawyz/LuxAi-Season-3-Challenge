@@ -671,8 +671,7 @@ def train_maddpg(config: MADDPGConfig):
     
     # State tracking
     global_step = 0
-    episode_rewards = [0.0 for _ in range(config.num_envs)]
-    best_elo = -float('inf')
+    episode_rewards = np.zeros((config.num_envs, 2))
 
     # Tracking
     reward_history = []
@@ -681,6 +680,7 @@ def train_maddpg(config: MADDPGConfig):
     best_elo = -float('inf')
     
     # Opponent actors (for self-play mode)
+    best_elo = -np.inf
     current_opponent = None
     opponent_actor_0 = None
     opponent_actor_1 = None
@@ -879,10 +879,12 @@ def train_maddpg(config: MADDPGConfig):
             
             replay_buffer.add(obs_single, actions_single, rewards_single, next_obs_single, done_single)
             
-            episode_rewards[i] += rewards_single.sum().item()
-            
+            episode_rewards[i, 0] += rewards_single[0].item()  # Team 0
+            episode_rewards[i, 1] += rewards_single[1].item()  # Team 1
+
             if done_single:
-                episode_rewards[i] = 0.0
+                episode_rewards[i, 0] = 0.0
+                episode_rewards[i, 1] = 0.0
                 
                 # Reset IL state for this environment
                 if config.use_il_reward and il_reward_shaper is not None:
@@ -1023,8 +1025,8 @@ def train_maddpg(config: MADDPGConfig):
         
         # Logging
         if global_step % config.log_freq == 0:
-            mean_reward = np.mean(episode_rewards)
-            
+            mean_reward = np.mean(episode_rewards[:, 0])  # Team 0
+
             reward_history.append(mean_reward) # Tracking
 
             elapsed = (time.time() - start_time) / 60
@@ -1211,7 +1213,7 @@ if __name__ == "__main__":
     parser.add_argument("--total-timesteps", type=int, default=10_000_000, help="Total training timesteps")
     parser.add_argument("--reward-mode", type=str, default="dense", choices=["sparse", "dense"], help="Reward mode")
     parser.add_argument("--learning-rate-actor", type=float, default=1e-4, help="Actor learning rate")
-    parser.add_argument("--learning-rate-critic", type=float, default=3e-4, help="Critic learning rate")
+    parser.add_argument("--learning-rate-critic", type=float, default=1e-4, help="Critic learning rate")
     parser.add_argument("--buffer-size", type=int, default=100_000, help="Replay buffer size")
     parser.add_argument("--batch-size", type=int, default=256, help="Batch size")
     parser.add_argument("--gamma", type=float, default=0.99, help="Discount factor")
