@@ -1135,9 +1135,7 @@ def train_maddpg(config: MADDPGConfig):
     timestamp = int(time.time())
     
     fig, axes = plt.subplots(3, 1, figsize=(9, 15))
-    print(reward_history)
-    print(actor_loss_history)
-    print(critic_loss_history)
+    
     # Reward history
     if reward_history:
         smoothed_rewards = exponential_smooth(reward_history, alpha=0.1)
