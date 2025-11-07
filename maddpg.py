@@ -1139,40 +1139,35 @@ def train_maddpg(config: MADDPGConfig):
     # Reward history
     if reward_history:
         smoothed_rewards = exponential_smooth(reward_history, alpha=0.1)
-        axes[0, 0].plot(reward_history, color='tab:orange', linewidth=1, alpha=0.6, label='Raw')
-        axes[0, 0].plot(smoothed_rewards, color='tab:blue', linewidth=3, label='Smoothed')
-        axes[0, 0].set_title('Reward History')
-        axes[0, 0].set_xlabel('Log Step')
-        axes[0, 0].set_ylabel('Mean Reward')
-        axes[0, 0].grid(True)
-        axes[0, 0].legend(loc='upper left')
+        axes[0].plot(reward_history, color='tab:orange', linewidth=1, alpha=0.6, label='Raw')
+        axes[0].plot(smoothed_rewards, color='tab:blue', linewidth=3, label='Smoothed')
+        axes[0].set_title('Reward History')
+        axes[0].set_xlabel('Log Step')
+        axes[0].set_ylabel('Mean Reward')
+        axes[0].grid(True)
+        axes[0].legend(loc='upper left')
     
     # Actor loss history
     if actor_loss_history:
         smoothed_actor_loss = exponential_smooth(actor_loss_history, alpha=0.1)
-        axes[0, 1].plot(actor_loss_history, color='tab:orange', linewidth=1, alpha=0.6, label='Raw')
-        axes[0, 1].plot(smoothed_actor_loss, color='tab:blue', linewidth=3, label='Smoothed')
-        axes[0, 1].set_title('Actor Loss History')
-        axes[0, 1].set_xlabel('Gradient Step')
-        axes[0, 1].set_ylabel('Actor Loss')
-        axes[0, 1].grid(True)
-        axes[0, 1].legend(loc='upper left')
+        axes[1].plot(actor_loss_history, color='tab:orange', linewidth=1, alpha=0.6, label='Raw')
+        axes[1].plot(smoothed_actor_loss, color='tab:blue', linewidth=3, label='Smoothed')
+        axes[1].set_title('Actor Loss History')
+        axes[1].set_xlabel('Gradient Step')
+        axes[1].set_ylabel('Actor Loss')
+        axes[1].grid(True)
+        axes[1].legend(loc='upper left')
     
     # Critic loss history
     if critic_loss_history:
         smoothed_critic_loss = exponential_smooth(critic_loss_history, alpha=0.1)
-        axes[1, 0].plot(critic_loss_history, color='tab:orange', linewidth=1, alpha=0.6, label='Raw')
-        axes[1, 0].plot(smoothed_critic_loss, color='tab:blue', linewidth=3, label='Smoothed')
-        axes[1, 0].set_title('Critic Loss History')
-        axes[1, 0].set_xlabel('Gradient Step')
-        axes[1, 0].set_ylabel('Critic Loss')
-        axes[1, 0].grid(True)
-        axes[1, 0].legend(loc='upper left')
-    
-    # Hide the 4th subplot (no entropy for MADDPG)
-    axes[1, 1].axis('off')
-    axes[1, 1].text(0.5, 0.5, 'No entropy term in MADDPG', 
-                    ha='center', va='center', fontsize=12, transform=axes[1, 1].transAxes)
+        axes[2].plot(critic_loss_history, color='tab:orange', linewidth=1, alpha=0.6, label='Raw')
+        axes[2].plot(smoothed_critic_loss, color='tab:blue', linewidth=3, label='Smoothed')
+        axes[2].set_title('Critic Loss History')
+        axes[2].set_xlabel('Gradient Step')
+        axes[2].set_ylabel('Critic Loss')
+        axes[2].grid(True)
+        axes[2].legend(loc='upper left')
     
     plt.tight_layout()
     plot_filename = f'{timestamp}.png'

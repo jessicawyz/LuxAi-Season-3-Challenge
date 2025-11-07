@@ -1228,46 +1228,46 @@ def train_mappo(config: MAPPOConfig):
     # Reward history
     if reward_history:
         smoothed_rewards = exponential_smooth(reward_history, alpha=0.1)
-        axes[0, 0].plot(reward_history, color='tab:orange', linewidth=1, alpha=0.6, label='Raw')
-        axes[0, 0].plot(smoothed_rewards, color='tab:blue', linewidth=3, label='Smoothed')
-        axes[0, 0].set_title('Reward History')
-        axes[0, 0].set_xlabel('Update Step')
-        axes[0, 0].set_ylabel('Mean Reward')
-        axes[0, 0].grid(True)
-        axes[0, 0].legend(loc='upper left')
+        axes[0].plot(reward_history, color='tab:orange', linewidth=1, alpha=0.6, label='Raw')
+        axes[0].plot(smoothed_rewards, color='tab:blue', linewidth=3, label='Smoothed')
+        axes[0].set_title('Reward History')
+        axes[0].set_xlabel('Update Step')
+        axes[0].set_ylabel('Mean Reward')
+        axes[0].grid(True)
+        axes[0].legend(loc='upper left')
     
     # Actor loss history
     if actor_loss_history:
         smoothed_actor_loss = exponential_smooth(actor_loss_history, alpha=0.1)
-        axes[0, 1].plot(actor_loss_history, color='tab:orange', linewidth=1, alpha=0.6, label='Raw')
-        axes[0, 1].plot(smoothed_actor_loss, color='tab:blue', linewidth=3, label='Smoothed')
-        axes[0, 1].set_title('Actor Loss History')
-        axes[0, 1].set_xlabel('Update Step')
-        axes[0, 1].set_ylabel('Actor Loss')
-        axes[0, 1].grid(True)
-        axes[0, 1].legend(loc='upper left')
+        axes[1].plot(actor_loss_history, color='tab:orange', linewidth=1, alpha=0.6, label='Raw')
+        axes[1].plot(smoothed_actor_loss, color='tab:blue', linewidth=3, label='Smoothed')
+        axes[1].set_title('Actor Loss History')
+        axes[1].set_xlabel('Update Step')
+        axes[1].set_ylabel('Actor Loss')
+        axes[1].grid(True)
+        axes[1].legend(loc='upper left')
     
     # Critic loss history
     if critic_loss_history:
         smoothed_critic_loss = exponential_smooth(critic_loss_history, alpha=0.1)
-        axes[1, 0].plot(critic_loss_history, color='tab:orange', linewidth=1, alpha=0.6, label='Raw')
-        axes[1, 0].plot(smoothed_critic_loss, color='tab:blue', linewidth=3, label='Smoothed')
-        axes[1, 0].set_title('Critic Loss History')
-        axes[1, 0].set_xlabel('Update Step')
-        axes[1, 0].set_ylabel('Critic Loss')
-        axes[1, 0].grid(True)
-        axes[1, 0].legend(loc='upper left')
+        axes[2].plot(critic_loss_history, color='tab:orange', linewidth=1, alpha=0.6, label='Raw')
+        axes[2].plot(smoothed_critic_loss, color='tab:blue', linewidth=3, label='Smoothed')
+        axes[2].set_title('Critic Loss History')
+        axes[2].set_xlabel('Update Step')
+        axes[2].set_ylabel('Critic Loss')
+        axes[2].grid(True)
+        axes[2].legend(loc='upper left')
     
     # Entropy history
-    if entropy_history:
-        smoothed_entropy = exponential_smooth(entropy_history, alpha=0.1)
-        axes[1, 1].plot(entropy_history, color='tab:orange', linewidth=1, alpha=0.6, label='Raw')
-        axes[1, 1].plot(smoothed_entropy, color='tab:blue', linewidth=3, label='Smoothed')
-        axes[1, 1].set_title('Entropy Objective History')
-        axes[1, 1].set_xlabel('Update Step')
-        axes[1, 1].set_ylabel('Entropy')
-        axes[1, 1].grid(True)
-        axes[1, 1].legend(loc='upper left')
+    # if entropy_history:
+    #     smoothed_entropy = exponential_smooth(entropy_history, alpha=0.1)
+    #     axes[3].plot(entropy_history, color='tab:orange', linewidth=1, alpha=0.6, label='Raw')
+    #     axes[3].plot(smoothed_entropy, color='tab:blue', linewidth=3, label='Smoothed')
+    #     axes[3].set_title('Entropy Objective History')
+    #     axes[3].set_xlabel('Update Step')
+    #     axes[3].set_ylabel('Entropy')
+    #     axes[3].grid(True)
+    #     axes[3].legend(loc='upper left')
     
     plt.tight_layout()
     plot_filename = f'{timestamp}.png'
