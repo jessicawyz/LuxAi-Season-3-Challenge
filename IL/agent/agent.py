@@ -6,7 +6,7 @@ from .fleet import find_hidden_constants
 from .tasks import find_moves
 
 
-class Agent:
+class AgentUnetPlusPlus:
     def __init__(self, player: str, env_cfg, weights_dir: str) -> None:
 
         self.team_id = 0 if player == "player_0" else 1
@@ -16,7 +16,7 @@ class Agent:
         log(f"weights_dir = {weights_dir}")
         log(f"env_cfg = {env_cfg}")
 
-        self.unit_model = torch.jit.load(f"{weights_dir}/unit_unet.pth")
+        self.unit_model = torch.jit.load(f"{weights_dir}/unet++.pth")
         self.unit_model.eval()
 
         self.sap_model = torch.jit.load(f"{weights_dir}/sap_unet.pth")
