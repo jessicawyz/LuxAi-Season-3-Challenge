@@ -193,11 +193,6 @@ class MADDPGConfig:
     target_update_frequency: int = 1
     
     
-    epsilon_start: float = 1.0
-    epsilon_end: float = 0.05
-    epsilon_decay_steps: int = 500_000
-    
-    
     spatial_channels: int = 23 
     unit_feature_dim: int = 10
     global_feature_dim: int = 12
@@ -294,8 +289,7 @@ class MADDPGActor(nn.Module):
         unit_energies,
         unit_positions,
         tile_types,
-        spatial_hidden_state=None,
-        epsilon=0.0
+        spatial_hidden_state=None
     ):
         
         batch_size = spatial_features.shape[0]
@@ -327,50 +321,19 @@ class MADDPGActor(nn.Module):
             unit_sap_cost=40,
         )
         
-        
-        if epsilon > 0 and self.training:
-            
-            explore_mask = torch.rand(batch_size, self.config.max_units, device=action_type_logits.device) < epsilon
-    
-    
-            random_action_types = torch.randint(
-                0, 6,
-                (batch_size, self.config.max_units),
-                device=action_type_logits.device
-            )
-            
-            
-            action_type_mask = mask_info["action_type_mask"]
-            valid_random_actions = torch.where(
-                action_type_mask.gather(-1, random_action_types.unsqueeze(-1)).squeeze(-1),
-                random_action_types,
-                torch.argmax(action_type_logits, dim=-1)
-            )
-            
-            
-            deterministic_actions = torch.argmax(action_type_logits, dim=-1)
-            action_types = torch.where(
-                explore_mask & unit_mask,
-                valid_random_actions,
-                deterministic_actions
-            )
-        else:
-            
-            action_types = torch.argmax(action_type_logits, dim=-1)
-
-
+        # Select actions deterministically (argmax)
+        action_types = torch.argmax(action_type_logits, dim=-1)
         sap_targets = torch.argmax(sap_target_logits, dim=-1)
-
         # Convert sap targets to offsets
         sap_offsets = self.action_head._sap_index_to_offset(sap_targets)
 
-        # Construct actions using computed epsilon-greedy action_types
+        # Construct actions using deterministic action selection
         actions = torch.zeros(
             (batch_size, self.config.max_units, 3),
             dtype=torch.long,
             device=action_type_logits.device
         )
-        actions[:, :, 0] = action_types  # Use epsilon-greedy action types
+        actions[:, :, 0] = action_types  # Use deterministic action types
         actions[:, :, 1:] = sap_offsets
 
         # Mask invalid units
@@ -701,11 +664,6 @@ def train_maddpg(config: MADDPGConfig):
 
     while global_step < config.total_timesteps:
         
-        epsilon = max(
-            config.epsilon_end,
-            config.epsilon_start - (config.epsilon_start - config.epsilon_end) * global_step / config.epsilon_decay_steps
-        )
-        
         # Decide whether to use opponent from pool
         use_opponent = (
             config.use_selfplay and 
@@ -746,8 +704,7 @@ def train_maddpg(config: MADDPGConfig):
                 unit_energies=obs["team_0"]["unit_features"][:, :, 2] * 400,
                 unit_positions=(obs["team_0"]["unit_features"][:, :, :2] *
                               torch.tensor([config.map_width, config.map_height], device=config.device)).long(),
-                tile_types=obs["team_0"]["spatial_features"][:, 1] * 2,
-                epsilon=epsilon
+                tile_types=obs["team_0"]["spatial_features"][:, 1] * 2
             )
             
             # Player 1: use baseline agent, opponent, or current policy
@@ -771,8 +728,7 @@ def train_maddpg(config: MADDPGConfig):
                     unit_energies=obs["team_1"]["unit_features"][:, :, 2] * 400,
                     unit_positions=(obs["team_1"]["unit_features"][:, :, :2] *
                                   torch.tensor([config.map_width, config.map_height], device=config.device)).long(),
-                    tile_types=obs["team_1"]["spatial_features"][:, 1] * 2,
-                    epsilon=0.0 
+                    tile_types=obs["team_1"]["spatial_features"][:, 1] * 2
                 )
             else:
                 actions_1, _, _ = actor_1(
@@ -783,8 +739,7 @@ def train_maddpg(config: MADDPGConfig):
                     unit_energies=obs["team_1"]["unit_features"][:, :, 2] * 400,
                     unit_positions=(obs["team_1"]["unit_features"][:, :, :2] *
                                   torch.tensor([config.map_width, config.map_height], device=config.device)).long(),
-                    tile_types=obs["team_1"]["spatial_features"][:, 1] * 2,
-                    epsilon=epsilon
+                    tile_types=obs["team_1"]["spatial_features"][:, 1] * 2
                 )
         
         
@@ -921,8 +876,7 @@ def train_maddpg(config: MADDPGConfig):
                             unit_energies=next_obs_batch["team_0"]["unit_features"][:, :, 2] * 400,
                             unit_positions=(next_obs_batch["team_0"]["unit_features"][:, :, :2] *
                                           torch.tensor([config.map_width, config.map_height], device=config.device)).long(),
-                            tile_types=next_obs_batch["team_0"]["spatial_features"][:, 1] * 2,
-                            epsilon=0.0
+                            tile_types=next_obs_batch["team_0"]["spatial_features"][:, 1] * 2
                         )
                         
                         next_actions_1, _, _ = target_actor_1(
@@ -933,8 +887,7 @@ def train_maddpg(config: MADDPGConfig):
                             unit_energies=next_obs_batch["team_1"]["unit_features"][:, :, 2] * 400,
                             unit_positions=(next_obs_batch["team_1"]["unit_features"][:, :, :2] *
                                           torch.tensor([config.map_width, config.map_height], device=config.device)).long(),
-                            tile_types=next_obs_batch["team_1"]["spatial_features"][:, 1] * 2,
-                            epsilon=0.0
+                            tile_types=next_obs_batch["team_1"]["spatial_features"][:, 1] * 2
                         )
                         
                         
@@ -984,8 +937,7 @@ def train_maddpg(config: MADDPGConfig):
                         unit_energies=obs_batch[f"team_{team_id}"]["unit_features"][:, :, 2] * 400,
                         unit_positions=(obs_batch[f"team_{team_id}"]["unit_features"][:, :, :2] *
                                       torch.tensor([config.map_width, config.map_height], device=config.device)).long(),
-                        tile_types=obs_batch[f"team_{team_id}"]["spatial_features"][:, 1] * 2,
-                        epsilon=0.0
+                        tile_types=obs_batch[f"team_{team_id}"]["spatial_features"][:, 1] * 2
                     )
                     
                     
@@ -1035,7 +987,7 @@ def train_maddpg(config: MADDPGConfig):
             reward_history.append(mean_reward) # Tracking
 
             elapsed = (time.time() - start_time) / 60
-            log_msg = f"[{elapsed:.2f} min] Step {global_step} | Epsilon {epsilon:.3f} | Mean Reward {mean_reward:.2f} | Buffer {len(replay_buffer)}"
+            log_msg = f"[{elapsed:.2f} min] Step {global_step} | Mean Reward {mean_reward:.2f} | Buffer {len(replay_buffer)}"
             if config.use_baseline_opponent:
                 log_msg += " | Opponent: Baseline"
             elif use_opponent and current_opponent:
@@ -1047,7 +999,7 @@ def train_maddpg(config: MADDPGConfig):
                 il_agreement = (il_info.get("team_0_il_agreement_rate", 0) + 
                                il_info.get("team_1_il_agreement_rate", 0)) / 2
                 il_weight = il_info.get("team_0_il_weight", 0)
-                log_msg += f" | IL Agree {il_agreement:.2%} | IL λ {il_weight:.3f}"
+                log_msg += f" | IL Agree {il_agreement:.2%} | IL Î» {il_weight:.3f}"
             
             print(log_msg)
         
@@ -1218,9 +1170,6 @@ if __name__ == "__main__":
     parser.add_argument("--batch-size", type=int, default=256, help="Batch size")
     parser.add_argument("--gamma", type=float, default=0.99, help="Discount factor")
     parser.add_argument("--tau", type=float, default=0.005, help="Soft update coefficient")
-    parser.add_argument("--epsilon-start", type=float, default=1.0, help="Initial epsilon")
-    parser.add_argument("--epsilon-end", type=float, default=0.05, help="Final epsilon")
-    parser.add_argument("--epsilon-decay-steps", type=int, default=500_000, help="Epsilon decay steps")
     parser.add_argument("--checkpoint-dir", type=str, default="checkpoint", help="Checkpoint directory")
     parser.add_argument("--use-selfplay", action="store_true", default=True, help="Use self-play training")
     parser.add_argument("--no-selfplay", action="store_false", dest="use_selfplay", help="Disable self-play")
@@ -1257,9 +1206,6 @@ if __name__ == "__main__":
         batch_size=args.batch_size,
         gamma=args.gamma,
         tau=args.tau,
-        epsilon_start=args.epsilon_start,
-        epsilon_end=args.epsilon_end,
-        epsilon_decay_steps=args.epsilon_decay_steps,
         checkpoint_dir=args.checkpoint_dir,
         use_selfplay=args.use_selfplay,
         use_baseline_opponent=args.use_baseline_opponent,
