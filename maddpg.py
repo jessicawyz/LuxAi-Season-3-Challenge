@@ -331,8 +331,8 @@ class MADDPGActor(nn.Module):
         if epsilon > 0 and self.training:
             
             explore_mask = torch.rand(batch_size, self.config.max_units, device=action_type_logits.device) < epsilon
-            
-            
+    
+    
             random_action_types = torch.randint(
                 0, 6,
                 (batch_size, self.config.max_units),
@@ -357,21 +357,26 @@ class MADDPGActor(nn.Module):
         else:
             
             action_types = torch.argmax(action_type_logits, dim=-1)
-        
-        
+
+
         sap_targets = torch.argmax(sap_target_logits, dim=-1)
-        
-        
-        actions, action_info = self.action_head.sample_actions(
-            action_type_logits,
-            sap_target_logits,
-            mask_info["action_type_mask"],
-            mask_info["sap_target_mask"],
-            unit_mask,
-            deterministic=True
+
+        # Convert sap targets to offsets
+        sap_offsets = self.action_head._sap_index_to_offset(sap_targets)
+
+        # Construct actions using computed epsilon-greedy action_types
+        actions = torch.zeros(
+            (batch_size, self.config.max_units, 3),
+            dtype=torch.long,
+            device=action_type_logits.device
         )
-        
-        return actions, new_spatial_hidden_state, action_info
+        actions[:, :, 0] = action_types  # Use epsilon-greedy action types
+        actions[:, :, 1:] = sap_offsets
+
+        # Mask invalid units
+        actions = actions * unit_mask.unsqueeze(-1).long()
+
+        return actions, new_spatial_hidden_state, {}
 
 
 class MADDPGCritic(nn.Module):

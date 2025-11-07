@@ -64,6 +64,7 @@ class LuxRewardShaper:
         
         # State tracking for dense rewards
         self.prev_state = None
+        self.explored_tiles = set()
     
     def compute_reward(
         self,
@@ -188,9 +189,18 @@ class LuxRewardShaper:
         
         # Exploration reward 
         if self.exploration_reward != 0:
-            curr_visible = np.sum(obs["sensor_mask"])
-            next_visible = np.sum(next_obs["sensor_mask"])
-            new_tiles = max(0, next_visible - curr_visible)
+            # Get currently visible tile coordinates
+            sensor_mask = next_obs["sensor_mask"]
+            visible_coords = np.argwhere(sensor_mask)
+            
+            # Count truly new tiles
+            new_tiles = 0
+            for coord in visible_coords:
+                coord_tuple = tuple(coord)
+                if coord_tuple not in self.explored_tiles:
+                    self.explored_tiles.add(coord_tuple)
+                    new_tiles += 1
+            
             reward += new_tiles * self.exploration_reward
         
         # Relic discovery reward
@@ -203,7 +213,6 @@ class LuxRewardShaper:
         return reward
     
     def _compute_total_energy(self, obs: Dict, team_id: int) -> float:
-        
         # total energy for team
         energies = np.array(obs["units"]["energy"][team_id])
         unit_mask = np.array(obs["units_mask"][team_id])
@@ -214,8 +223,8 @@ class LuxRewardShaper:
         return np.sum(valid_energies) if len(valid_energies) > 0 else 0.0
     
     def reset(self):
-        
         self.prev_state = None
+        self.explored_tiles = set()
     
     def compute_il_rewards_batch(
         self,

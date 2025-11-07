@@ -322,6 +322,32 @@ class MAPPOActor(nn.Module):
                 unit_mask,
                 deterministic=False
             )
+            
+            # Apply epsilon-greedy exploration
+            if epsilon > 0:
+                explore_mask = torch.rand(batch_size, self.config.max_units, device=actions.device) < epsilon
+                
+                # Generate random action types
+                random_action_types = torch.randint(
+                    0, 6,
+                    (batch_size, self.config.max_units),
+                    device=actions.device
+                )
+                
+                # Ensure random actions are valid
+                action_type_mask = mask_info["action_type_mask"]
+                valid_random_actions = torch.where(
+                    action_type_mask.gather(-1, random_action_types.unsqueeze(-1)).squeeze(-1),
+                    random_action_types,
+                    actions[:, :, 0]  # Fallback to policy action if random action invalid
+                )
+                
+                # Apply epsilon-greedy: replace with random actions where explore_mask is True
+                actions[:, :, 0] = torch.where(
+                    explore_mask & unit_mask,
+                    valid_random_actions,
+                    actions[:, :, 0]
+                )
         
         # Compute log probabilities
         log_probs = self.compute_log_probs(
