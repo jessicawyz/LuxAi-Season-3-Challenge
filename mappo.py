@@ -163,15 +163,15 @@ class MAPPOConfig:
     # Training parameters
     total_timesteps: int = 10_000_000
     learning_rate: float = 1e-4
-    n_steps: int = 512  # Steps per update
-    n_epochs: int = 10  # PPO epochs per update
-    batch_size: int = 64  # Mini-batch size
+    n_steps: int = 256  
+    n_epochs: int = 10  
+    batch_size: int = 64  
     gamma: float = 0.99
     gae_lambda: float = 0.95
     clip_range: float = 0.2
-    clip_range_vf: Optional[float] = None  # If None, no clipping
-    ent_coef: float = 0.01  # Entropy coefficient
-    vf_coef: float = 0.5  # Value function coefficient
+    clip_range_vf: Optional[float] = None  
+    ent_coef: float = 0.01  
+    vf_coef: float = 0.5  
     max_grad_norm: float = 0.5
     
     # Architecture
@@ -180,8 +180,8 @@ class MAPPOConfig:
     global_feature_dim: int = 12
     hidden_dim: int = 64
     convlstm_hidden_dim: int = 32
-    transformer_heads: int = 4
-    transformer_layers: int = 2
+    transformer_heads: int = 2
+    transformer_layers: int = 1
     
     # Environment
     max_units: int = 16
@@ -798,7 +798,7 @@ def train_mappo(config: MAPPOConfig):
     
     # Tracking
     global_step = 0
-    episode_rewards = np.zeros(config.num_envs, 2)
+    episode_rewards = np.zeros((config.num_envs, 2))
     
     # Opponent actors (for self-play mode)
     best_elo = -np.inf

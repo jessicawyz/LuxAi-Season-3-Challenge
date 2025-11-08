@@ -182,7 +182,7 @@ class MADDPGConfig:
     
     total_timesteps: int = 10_000
     learning_rate_actor: float = 1e-4
-    learning_rate_critic: float = 1e-4
+    learning_rate_critic: float = 1e-3
     buffer_size: int = 1500
     batch_size: int = 128
     gamma: float = 0.99
@@ -198,8 +198,8 @@ class MADDPGConfig:
     global_feature_dim: int = 12
     hidden_dim: int = 64
     convlstm_hidden_dim: int = 32
-    transformer_heads: int = 4
-    transformer_layers: int = 2
+    transformer_heads: int = 2
+    transformer_layers: int = 1
     
     
     max_units: int = 16
@@ -996,16 +996,11 @@ def train_maddpg(config: MADDPGConfig):
             # Use completed episode returns if available, otherwise current accumulation
             if len(completed_returns_0) > 0:
                 mean_reward = np.mean(list(completed_returns_0))
-                num_episodes = len(completed_returns_0)
-            else:
-                # Fallback to current accumulation if no episodes completed yet
-                mean_reward = np.mean(episode_rewards[:, 0])
-                num_episodes = 0
 
             reward_history.append(mean_reward) # Tracking
 
             elapsed = (time.time() - start_time) / 60
-            log_msg = f"[{elapsed:.2f} min] Step {global_step} | Mean Reward {mean_reward:.2f} ({num_episodes} eps) | Buffer {len(replay_buffer)}"
+            log_msg = f"[{elapsed:.2f} min] Step {global_step} | Mean Reward {mean_reward:.2f} | Buffer {len(replay_buffer)}"
             if config.use_baseline_opponent:
                 log_msg += " | Opponent: Baseline"
             elif use_opponent and current_opponent:
