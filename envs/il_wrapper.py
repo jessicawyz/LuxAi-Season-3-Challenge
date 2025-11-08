@@ -442,7 +442,7 @@ class ILWrapper:
         gfs_array = np.stack(gfs_batch)  # (actual_batch_size, 17)
         gfs_tensor = torch.zeros((actual_batch_size, 17, 3, 3), dtype=torch.float32, device=self.device)
         for i in range(17):
-            gfs_tensor[:, i, :, :] = torch.from_numpy(gfs_array[:, i:i+1]).float()
+            gfs_tensor[:, i, :, :] = torch.from_numpy(gfs_array[:, i:i+1]).reshape(-1, 1, 1)
         
         # Run IL model
         with torch.no_grad():
