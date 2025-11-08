@@ -150,8 +150,7 @@ class Agent():
                 unit_energies=unit_energies,
                 unit_positions=unit_positions,
                 tile_types=tile_types,
-                spatial_hidden_state=self.spatial_hidden_state,
-                epsilon=0.5  # Deterministic action selection
+                spatial_hidden_state=self.spatial_hidden_state
             )
         actions = actions_tensor.squeeze(0).cpu().numpy()  # (max_units, 3)
         

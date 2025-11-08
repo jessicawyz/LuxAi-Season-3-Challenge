@@ -161,7 +161,7 @@ class HierarchicalActionHead(nn.Module):
                         x, y = new_positions[b, u]
                         x, y = x.item(), y.item()
                         if 0 <= x < map_width and 0 <= y < map_height:
-                            not_blocked[b, u] = (tile_types[b, x, y] != 2)
+                            not_blocked[b, u] = (tile_types[b, y, x] != 2)
             
             # move is valid if: unit exists, has energy, in bounds, not blocked
             mask[:, :, action_idx] = can_move & in_bounds & not_blocked

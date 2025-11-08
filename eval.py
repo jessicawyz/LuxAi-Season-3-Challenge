@@ -98,8 +98,7 @@ def evaluate_vs_opponent(
                     unit_positions=(obs["team_0"]["unit_features"][:, :, :2] *
                                   torch.tensor([agent_config.map_width, agent_config.map_height], 
                                               device=config.device)).long(),
-                    tile_types=obs["team_0"]["spatial_features"][:, 1] * 2,
-                    epsilon=0.0   
+                    tile_types=obs["team_0"]["spatial_features"][:, 1] * 2
                 )
                 
                 # Opponent: player_1
@@ -112,8 +111,7 @@ def evaluate_vs_opponent(
                     unit_positions=(obs["team_1"]["unit_features"][:, :, :2] *
                                   torch.tensor([opp_config.map_width, opp_config.map_height], 
                                               device=config.device)).long(),
-                    tile_types=obs["team_1"]["spatial_features"][:, 1] * 2,
-                    epsilon=0.0  
+                    tile_types=obs["team_1"]["spatial_features"][:, 1] * 2
                 )
             
             # Step 

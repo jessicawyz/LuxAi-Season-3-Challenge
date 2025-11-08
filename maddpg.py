@@ -183,11 +183,11 @@ class MADDPGConfig:
     total_timesteps: int = 10_000_000
     learning_rate_actor: float = 1e-4
     learning_rate_critic: float = 3e-4
-    buffer_size: int = 1000
+    buffer_size: int = 10_000
     batch_size: int = 256
     gamma: float = 0.99
     tau: float = 0.005  
-    learning_starts: int = 10_000
+    learning_starts: int = 2_000
     train_frequency: int = 4
     gradient_steps: int = 1
     target_update_frequency: int = 1
@@ -333,8 +333,9 @@ class MADDPGActor(nn.Module):
             dtype=torch.long,
             device=action_type_logits.device
         )
-        actions[:, :, 0] = action_types  # Use deterministic action types
-        actions[:, :, 1:] = sap_offsets
+        actions[:, :, 0] = action_types  
+        is_sap = (action_types == 5).unsqueeze(-1)
+        actions[:, :, 1:] = actions[:, :, 1:] * is_sap.long()
 
         # Mask invalid units
         actions = actions * unit_mask.unsqueeze(-1).long()
@@ -640,6 +641,10 @@ def train_maddpg(config: MADDPGConfig):
     # State tracking
     global_step = 0
     episode_rewards = np.zeros((config.num_envs, 2))
+    
+    # Track completed episode returns (rolling window)
+    completed_returns_0 = deque(maxlen=100)  # Last 100 episodes for team 0
+    completed_returns_1 = deque(maxlen=100)  # Last 100 episodes for team 1
 
     # Tracking
     reward_history = []
@@ -835,6 +840,9 @@ def train_maddpg(config: MADDPGConfig):
                 )
                 rewards_single = rewards_single + il_reward_add
             
+            # Clip rewards to prevent extreme values
+            rewards_single = torch.clamp(rewards_single, min=-50.0, max=50.0)
+            
             done_single = dones[i]
             
             replay_buffer.add(obs_single, actions_single, rewards_single, next_obs_single, done_single)
@@ -843,6 +851,11 @@ def train_maddpg(config: MADDPGConfig):
             episode_rewards[i, 1] += rewards_single[1].item()  # Team 1
 
             if done_single:
+                # Store completed episode returns
+                completed_returns_0.append(episode_rewards[i, 0])
+                completed_returns_1.append(episode_rewards[i, 1])
+                
+                # Reset for next episode
                 episode_rewards[i, 0] = 0.0
                 episode_rewards[i, 1] = 0.0
                 
@@ -982,12 +995,19 @@ def train_maddpg(config: MADDPGConfig):
         
         # Logging
         if global_step % config.log_freq == 0:
-            mean_reward = np.mean(episode_rewards[:, 0])  # Team 0
+            # Use completed episode returns if available, otherwise current accumulation
+            if len(completed_returns_0) > 0:
+                mean_reward = np.mean(list(completed_returns_0))
+                num_episodes = len(completed_returns_0)
+            else:
+                # Fallback to current accumulation if no episodes completed yet
+                mean_reward = np.mean(episode_rewards[:, 0])
+                num_episodes = 0
 
             reward_history.append(mean_reward) # Tracking
 
             elapsed = (time.time() - start_time) / 60
-            log_msg = f"[{elapsed:.2f} min] Step {global_step} | Mean Reward {mean_reward:.2f} | Buffer {len(replay_buffer)}"
+            log_msg = f"[{elapsed:.2f} min] Step {global_step} | Mean Reward {mean_reward:.2f} ({num_episodes} eps) | Buffer {len(replay_buffer)}"
             if config.use_baseline_opponent:
                 log_msg += " | Opponent: Baseline"
             elif use_opponent and current_opponent:
@@ -1166,7 +1186,7 @@ if __name__ == "__main__":
     parser.add_argument("--reward-mode", type=str, default="dense", choices=["sparse", "dense"], help="Reward mode")
     parser.add_argument("--learning-rate-actor", type=float, default=1e-4, help="Actor learning rate")
     parser.add_argument("--learning-rate-critic", type=float, default=1e-4, help="Critic learning rate")
-    parser.add_argument("--buffer-size", type=int, default=100_000, help="Replay buffer size")
+    parser.add_argument("--buffer-size", type=int, default=10_000, help="Replay buffer size")
     parser.add_argument("--batch-size", type=int, default=256, help="Batch size")
     parser.add_argument("--gamma", type=float, default=0.99, help="Discount factor")
     parser.add_argument("--tau", type=float, default=0.005, help="Soft update coefficient")
