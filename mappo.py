@@ -910,8 +910,9 @@ def train_mappo(config: MAPPOConfig):
             
             # Add IL rewards to environment rewards per-environment
             if config.use_il_reward and il_reward_shaper is not None:
-                rewards_single[0] += il_rewards_0[0].item()  # Team 0
-                rewards_single[1] += il_rewards_0[1].item()  # Team 1
+                for i in range(config.num_envs):
+                    rewards[i][0] += il_rewards_0[0].item()  # Team 0
+                    rewards[i][1] += il_rewards_0[1].item()  # Team 1
             
             # Store in buffers
             values = torch.stack([values_0, values_1], dim=1) 
@@ -1020,10 +1021,9 @@ def train_mappo(config: MAPPOConfig):
             # Add IL statistics if available
             if config.use_il_reward and il_info:
                 # Average across teams
-                il_agreement = (il_info.get("team_0_il_agreement_rate", 0) + 
-                               il_info.get("team_1_il_agreement_rate", 0)) / 2
+                il_agreement = il_info.get("il_agreement_rate", 0)
                 il_weight = il_info.get("team_0_il_weight", 0)
-                log_msg += f" | IL Agree {il_agreement:.2%} | IL ÃŽÂ» {il_weight:.3f}"
+                log_msg += f" | IL Agree {il_agreement:.2%} | IL Lambda {il_weight:.3f}"
             
             print(log_msg)
         
