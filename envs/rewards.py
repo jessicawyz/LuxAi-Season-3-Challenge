@@ -123,9 +123,11 @@ class LuxRewardShaper:
             next_wins = next_obs["team_wins"][team_id]
             
             if next_wins > curr_wins:
+                # Won the match
                 reward += self.match_win_bonus
-            else:
-                reward -= self.match_win_bonus
+            # else:
+            #     # Lost the match
+            #     reward -= self.match_win_bonus
         
         # Check if episode ended
         if done:
@@ -133,9 +135,9 @@ class LuxRewardShaper:
             if final_wins[team_id] > final_wins[1 - team_id]:
                 # Won the episode
                 reward += self.episode_win_bonus
-            elif final_wins[team_id] < final_wins[1 - team_id]:
-                # Lost the episode
-                reward -= self.episode_win_bonus
+            # elif final_wins[team_id] < final_wins[1 - team_id]:
+            #     # Lost the episode
+            #     reward -= self.episode_win_bonus
         
         return reward
     

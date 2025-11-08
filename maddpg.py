@@ -180,16 +180,16 @@ class MADDPGConfig:
     reward_mode: str = "dense"
     
     
-    total_timesteps: int = 10_000_000
+    total_timesteps: int = 10_000
     learning_rate_actor: float = 1e-4
-    learning_rate_critic: float = 3e-4
-    buffer_size: int = 10_000
-    batch_size: int = 256
+    learning_rate_critic: float = 1e-4
+    buffer_size: int = 1500
+    batch_size: int = 128
     gamma: float = 0.99
-    tau: float = 0.005  
-    learning_starts: int = 2_000
-    train_frequency: int = 4
-    gradient_steps: int = 1
+    tau: float = 0.01  
+    learning_starts: int = 100
+    train_frequency: int = 2
+    gradient_steps: int = 8
     target_update_frequency: int = 1
     
     
@@ -208,8 +208,9 @@ class MADDPGConfig:
     unit_sap_range: int = 4
     
     
-    snapshot_freq: int = 100_000
-    eval_freq: int = 50_000
+    log_freq: int = 1000
+    snapshot_freq: int = 1000
+    eval_freq: int = 1000
     checkpoint_dir: str = "checkpoint"
     
     # Self-play parameters
@@ -233,10 +234,7 @@ class MADDPGConfig:
     il_compare_sap_targets: bool = False  # Compare SAP targets (needs SAP-UNet)
     target_il_agreement_rate: float = 0.6
     
-    
-    log_freq: int = 1000
-    
-    
+
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
 
 
@@ -1226,13 +1224,15 @@ if __name__ == "__main__":
         batch_size=args.batch_size,
         gamma=args.gamma,
         tau=args.tau,
-        checkpoint_dir=args.checkpoint_dir,
-        use_selfplay=args.use_selfplay,
+        # selfplay
         use_baseline_opponent=args.use_baseline_opponent,
+        use_selfplay=args.use_selfplay,
         selfplay_ratio=args.selfplay_ratio,
         num_eval_opponents=args.num_eval_opponents,
         max_pool_size=args.max_pool_size,
         elo_k_factor=args.elo_k_factor,
+        # params
+        checkpoint_dir=args.checkpoint_dir,
         snapshot_freq=args.snapshot_freq,
         eval_freq=args.eval_freq,
         log_freq=args.log_freq,

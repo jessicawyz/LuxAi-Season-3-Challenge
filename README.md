@@ -33,8 +33,9 @@ Run:
 
 ## Dependencies
 
+    git clone https://github.com/jessicawyz/LuxAi-Season-3-Challenge.git python
+    cp -a python Lux-Design-S3/kits/python
     cd Lux-Design-S3/kits/python
-    git clone https://github.com/jessicawyz/LuxAi-Season-3-Challenge.git
     
     pip install -r requirements.txt
 
