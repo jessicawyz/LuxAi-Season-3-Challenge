@@ -716,13 +716,8 @@ def train_maddpg(config: MADDPGConfig):
             
             # Add IL rewards to this environment's rewards
             if config.use_il_reward and il_reward_shaper is not None:
-                # rewards_single is a tensor [player_0_reward, player_1_reward]
-                il_reward_add = torch.tensor(
-                    [il_rewards_0[i].item(), il_rewards_1[i].item()],
-                    dtype=rewards_single.dtype,
-                    device=rewards_single.device
-                )
-                rewards_single = rewards_single + il_reward_add
+                rewards_single[0] += il_rewards_0[0].item()  # Team 0
+                rewards_single[1] += il_rewards_0[1].item()  # Team 1
             
             # Clip rewards to prevent extreme values
             rewards_single = torch.clamp(rewards_single, min=-50.0, max=50.0)

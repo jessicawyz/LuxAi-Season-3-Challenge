@@ -910,14 +910,8 @@ def train_mappo(config: MAPPOConfig):
             
             # Add IL rewards to environment rewards per-environment
             if config.use_il_reward and il_reward_shaper is not None:
-                for i in range(config.num_envs):
-                    # rewards[i] is a tensor [player_0_reward, player_1_reward]
-                    il_reward_add = torch.tensor(
-                        [il_rewards_0[i].item(), il_rewards_1[i].item()],
-                        dtype=rewards[i].dtype,
-                        device=rewards[i].device
-                    )
-                    rewards[i] = rewards[i] + il_reward_add
+                rewards_single[0] += il_rewards_0[0].item()  # Team 0
+                rewards_single[1] += il_rewards_0[1].item()  # Team 1
             
             # Store in buffers
             values = torch.stack([values_0, values_1], dim=1) 
