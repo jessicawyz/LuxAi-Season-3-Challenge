@@ -152,16 +152,21 @@ class HierarchicalActionHead(nn.Module):
                 (new_positions[:, :, 1] < map_height)
             )
             
-            # check if destination is asteroid
-            not_blocked = torch.ones_like(in_bounds, dtype=torch.bool)
+            # check if destination is asteroid (vectorized)
+            # Clamp positions to valid map range for safe indexing
+            safe_x = torch.clamp(new_positions[:, :, 0], 0, map_width - 1)
+            safe_y = torch.clamp(new_positions[:, :, 1], 0, map_height - 1)
             
-            for b in range(batch_size):
-                for u in range(self.max_units):
-                    if in_bounds[b, u]:
-                        x, y = new_positions[b, u]
-                        x, y = x.item(), y.item()
-                        if 0 <= x < map_width and 0 <= y < map_height:
-                            not_blocked[b, u] = (tile_types[b, y, x] != 2)
+            # Gather tile types at destination positions
+            # Create indices for gathering
+            batch_indices = torch.arange(batch_size, device=tile_types.device).view(-1, 1).expand(-1, self.max_units)
+            destination_tiles = tile_types[batch_indices, safe_x, safe_y]
+            
+            # Not blocked if tile is not an asteroid (type 2)
+            not_blocked = (destination_tiles != 2)
+            
+            # Only apply where position was actually in bounds
+            not_blocked = not_blocked & in_bounds
             
             # move is valid if: unit exists, has energy, in bounds, not blocked
             mask[:, :, action_idx] = can_move & in_bounds & not_blocked
