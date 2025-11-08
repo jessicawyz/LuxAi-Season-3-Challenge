@@ -994,10 +994,10 @@ def train_maddpg(config: MADDPGConfig):
         # Logging
         if global_step % config.log_freq == 0:
             # Use completed episode returns if available, otherwise current accumulation
+            mean_reward = np.nan
             if len(completed_returns_0) > 0:
                 mean_reward = np.mean(list(completed_returns_0))
-
-            reward_history.append(mean_reward) # Tracking
+                reward_history.append(mean_reward) # Tracking
 
             elapsed = (time.time() - start_time) / 60
             log_msg = f"[{elapsed:.2f} min] Step {global_step} | Mean Reward {mean_reward:.2f} | Buffer {len(replay_buffer)}"

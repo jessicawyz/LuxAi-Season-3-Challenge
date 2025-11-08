@@ -142,16 +142,33 @@ class Agent():
 
         # Get actions
         with torch.no_grad():
-            actions_tensor, self.spatial_hidden_state, _ = self.actor(
-                spatial_features=spatial_features,
-                unit_features=unit_features,
-                unit_mask=unit_mask,
-                global_features=global_features,
-                unit_energies=unit_energies,
-                unit_positions=unit_positions,
-                tile_types=tile_types,
-                spatial_hidden_state=self.spatial_hidden_state
-            )
+            if self.model_name == 'maddpg':
+                actions_tensor, self.spatial_hidden_state, _ = self.actor(
+                    spatial_features=spatial_features,
+                    unit_features=unit_features,
+                    unit_mask=unit_mask,
+                    global_features=global_features,
+                    unit_energies=unit_energies,
+                    unit_positions=unit_positions,
+                    tile_types=tile_types,
+                    spatial_hidden_state=self.spatial_hidden_state
+                )
+
+            elif self.model_name == 'mappo':
+                actions_tensor, log_probs, entropy, self.spatial_hidden_state, _ = self.actor(
+                    spatial_features=spatial_features,
+                    unit_features=unit_features,
+                    unit_mask=unit_mask,
+                    global_features=global_features,
+                    unit_energies=unit_energies,
+                    unit_positions=unit_positions,
+                    tile_types=tile_types,
+                    spatial_hidden_state=self.spatial_hidden_state
+                )
+            
+            else:
+                raise Exception()
+        
         actions = actions_tensor.squeeze(0).cpu().numpy()  # (max_units, 3)
         
         return actions
