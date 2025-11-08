@@ -15,6 +15,7 @@ from envs.action_head import HierarchicalActionHead
 from selfplay import OpponentPool, create_selfplay_pool, PFSPConfig
 from eval import evaluate_and_update_pool, EvalConfig
 from baseline_agent import Agent as BaselineAgent
+from network import ConvLSTMCell, SpatialEncoder, TransformerUnitEncoder
 from dataclasses import asdict
 
 import matplotlib.pyplot as plt
@@ -28,131 +29,6 @@ except ImportError:
     IL_AVAILABLE = False
     print("[MAPPO] IL reward module not available")
 
-class ConvLSTMCell(nn.Module):
-    
-    def __init__(self, input_dim: int, hidden_dim: int, kernel_size: int = 3):
-        super().__init__()
-        self.hidden_dim = hidden_dim
-        padding = kernel_size // 2
-        
-        self.conv = nn.Conv2d(
-            input_dim + hidden_dim,
-            4 * hidden_dim,
-            kernel_size=kernel_size,
-            padding=padding
-        )
-    
-    def forward(self, x, hidden_state):
-        h, c = hidden_state
-        
-        combined = torch.cat([x, h], dim=1)
-        gates = self.conv(combined)
-        
-        i, f, o, g = torch.chunk(gates, 4, dim=1)
-        i = torch.sigmoid(i)
-        f = torch.sigmoid(f)
-        o = torch.sigmoid(o)
-        g = torch.tanh(g)
-        
-        c_next = f * c + i * g
-        h_next = o * torch.tanh(c_next)
-        
-        return h_next, (h_next, c_next)
-
-
-class SpatialEncoder(nn.Module):
-    
-    def __init__(self, input_channels: int, hidden_dim: int, output_dim: int):
-        super().__init__()
-        self.hidden_dim = hidden_dim
-        
-        self.conv1 = nn.Conv2d(input_channels, 64, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
-        
-        self.convlstm = ConvLSTMCell(128, hidden_dim, kernel_size=3)
-        
-        self.pool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = nn.Linear(hidden_dim, output_dim)
-    
-    def forward(self, spatial_features, hidden_state=None):
-        batch_size = spatial_features.shape[0]
-        
-        x = F.relu(self.conv1(spatial_features))
-        x = F.relu(self.conv2(x))
-        
-        if hidden_state is None:
-            h = torch.zeros(
-                batch_size, self.hidden_dim,
-                spatial_features.shape[2], spatial_features.shape[3],
-                device=spatial_features.device
-            )
-            c = torch.zeros_like(h)
-            hidden_state = (h, c)
-        
-        h, new_hidden_state = self.convlstm(x, hidden_state)
-        
-        pooled = self.pool(h).flatten(1)
-        encoded = self.fc(pooled)
-        
-        return encoded, new_hidden_state
-
-
-class TransformerUnitEncoder(nn.Module):
-        
-    def __init__(
-        self,
-        unit_feature_dim: int,
-        hidden_dim: int,
-        num_heads: int = 4,
-        num_layers: int = 2,
-    ):
-        super().__init__()
-        
-        self.input_proj = nn.Linear(unit_feature_dim, hidden_dim)
-        
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=hidden_dim,
-            nhead=num_heads,
-            dim_feedforward=hidden_dim * 4,
-            dropout=0.1,
-            batch_first=True
-        )
-        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
-        
-        self.output_proj = nn.Linear(hidden_dim, hidden_dim)
-    
-    def forward(self, unit_features, unit_mask):
-        batch_size = unit_features.shape[0]
-        num_units = unit_features.shape[1]
-        
-        has_valid_units = unit_mask.any(dim=1)
-        
-        x = self.input_proj(unit_features)
-        
-        encoded = torch.zeros_like(x)
-        aggregated = torch.zeros(batch_size, x.shape[-1], device=x.device)
-        
-        if has_valid_units.any():
-            attn_mask = ~unit_mask
-            
-            valid_indices = torch.where(has_valid_units)[0]
-            
-            if len(valid_indices) > 0:
-                x_valid = x[valid_indices]
-                attn_mask_valid = attn_mask[valid_indices]
-                
-                encoded_valid = self.transformer(x_valid, src_key_padding_mask=attn_mask_valid)
-                
-                encoded_valid = self.output_proj(encoded_valid)
-                
-                encoded[valid_indices] = encoded_valid
-                
-                mask_expanded = unit_mask[valid_indices].unsqueeze(-1).float()
-                aggregated_valid = (encoded_valid * mask_expanded).sum(1) / (mask_expanded.sum(1) + 1e-8)
-                aggregated[valid_indices] = aggregated_valid
-        
-        return encoded, aggregated
-
 
 @dataclass
 class MAPPOConfig:
@@ -161,11 +37,11 @@ class MAPPOConfig:
     reward_mode: str = "dense"
     
     # Training parameters
-    total_timesteps: int = 10_000_000
+    total_timesteps: int = 10_000
     learning_rate: float = 1e-4
-    n_steps: int = 256  
+    n_steps: int = 16  
     n_epochs: int = 10  
-    batch_size: int = 64  
+    batch_size: int = 32  
     gamma: float = 0.99
     gae_lambda: float = 0.95
     clip_range: float = 0.2
@@ -190,8 +66,9 @@ class MAPPOConfig:
     unit_sap_range: int = 4
     
     # Checkpointing
-    snapshot_freq: int = 100_000
-    eval_freq: int = 50_000
+    log_freq: int = 1000
+    snapshot_freq: int = 1000
+    eval_freq: int = 1000
     checkpoint_dir: str = "checkpoint"
     
     # Self-play parameters
@@ -201,6 +78,10 @@ class MAPPOConfig:
     use_baseline_opponent: bool = False
     max_pool_size: int = 20
     elo_k_factor: float = 32.0
+    anneal_selfplay_ratio: bool = False
+    selfplay_ratio_start: float = 0.0  # Start with 100% baseline
+    selfplay_ratio_end: float = 1.0    # End with 100% self-play
+    selfplay_ratio_anneal_steps: int = 2000
     
     # IL reward parameters
     use_il_reward: bool = False
@@ -214,8 +95,6 @@ class MAPPOConfig:
     il_reward_anneal_steps: int = 500_000
     il_compare_sap_targets: bool = False  # Compare SAP targets (needs SAP-UNet)
     target_il_agreement_rate: float = 0.6
-    
-    log_freq: int = 1000
     
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -713,6 +592,23 @@ def exponential_smooth(data, alpha=0.1):
         smoothed.append(alpha * data[i] + (1 - alpha) * smoothed[-1])
     return smoothed
 
+
+def compute_selfplay_ratio(config: MAPPOConfig, global_step: int) -> float:
+    """
+    Compute the current selfplay_ratio based on annealing schedule.
+    
+    Returns:
+        float: Current selfplay_ratio in range [selfplay_ratio_start, selfplay_ratio_end]
+    """
+    if not config.anneal_selfplay_ratio:
+        return config.selfplay_ratio
+    
+    # Linear annealing from start to end
+    progress = min(1.0, global_step / config.selfplay_ratio_anneal_steps)
+    current_ratio = config.selfplay_ratio_start + progress * (config.selfplay_ratio_end - config.selfplay_ratio_start)
+    
+    return current_ratio
+
 def train_mappo(config: MAPPOConfig):
     
     os.makedirs(config.checkpoint_dir, exist_ok=True)
@@ -818,12 +714,22 @@ def train_mappo(config: MAPPOConfig):
     
     while global_step < config.total_timesteps:
         
+        # Compute current selfplay ratio
+        current_selfplay_ratio = compute_selfplay_ratio(config, global_step)
+        
         # Decide whether to use opponent from pool
         use_opponent = (
             config.use_selfplay and 
             opponent_pool is not None and 
             len(opponent_pool.opponents) > 0 and
-            np.random.random() < config.selfplay_ratio
+            np.random.random() < current_selfplay_ratio
+        )
+        
+        # Decide whether to use baseline
+        use_baseline = (
+            config.use_baseline_opponent and
+            baseline_wrapper is not None and
+            np.random.random() >= current_selfplay_ratio  # Use baseline when not using self-play
         )
         
         # Sample new opponent if needed
@@ -846,7 +752,7 @@ def train_mappo(config: MAPPOConfig):
                 use_opponent = False
                 current_opponent = None
         
-        # === Collect rollouts ===
+        # Collect rollouts
         rollout_buffer_0.reset()
         rollout_buffer_1.reset()
         
@@ -869,7 +775,8 @@ def train_mappo(config: MAPPOConfig):
                 )
                 
                 # Player 1: baseline, opponent, or current policy
-                if config.use_baseline_opponent and baseline_wrapper is not None:
+                if use_baseline:
+                    # Use baseline agent
                     obs_raw = []
                     for i in range(config.num_envs):
                         obs_single = jax.tree.map(lambda x: x[i], env.prev_obs_raw)
@@ -1013,8 +920,8 @@ def train_mappo(config: MAPPOConfig):
                     rewards[i] = rewards[i] + il_reward_add
             
             # Store in buffers
-            values = torch.stack([values_0, values_1], dim=1)  # (num_envs, 2)
-            log_probs = torch.stack([log_probs_0, log_probs_1], dim=1)  # (num_envs, 2)
+            values = torch.stack([values_0, values_1], dim=1) 
+            log_probs = torch.stack([log_probs_0, log_probs_1], dim=1) 
             
             rollout_buffer_0.add(obs, actions_dict, rewards, dones, values, log_probs)
             rollout_buffer_1.add(obs, actions_dict, rewards, dones, values, log_probs)
@@ -1034,7 +941,7 @@ def train_mappo(config: MAPPOConfig):
             obs = next_obs
             global_step += config.num_envs
         
-        # === Compute advantages ===
+        # Compute advantages
         with torch.no_grad():
             last_values_0, _ = critic_0(
                 global_spatial_features=obs["global"]["spatial_features"],
@@ -1059,7 +966,7 @@ def train_mappo(config: MAPPOConfig):
         advantages_0, returns_0 = rollout_buffer_0.get(last_values)
         advantages_1, returns_1 = rollout_buffer_1.get(last_values)
         
-        # === PPO updates ===
+        # PPO updates
         epoch_actor_losses = []
         epoch_critic_losses = []
         epoch_entropy_values = []
@@ -1079,20 +986,19 @@ def train_mappo(config: MAPPOConfig):
             epoch_critic_losses.append(critic_loss_0)
             epoch_entropy_values.append(entropy_0)
             
-            # Update actor 1 and critic 1 (skip if using baseline)
-            if not config.use_baseline_opponent:
-                actor_loss_1, critic_loss_1, entropy_1 = update_ppo(
-                    actor_1, critic_1,
-                    actor_1_optimizer, critic_1_optimizer,
-                    rollout_buffer_1,
-                    advantages_1[:, :, 1],
-                    returns_1[:, :, 1],
-                    config,
-                    team_id=1
-                )
-                epoch_actor_losses.append(actor_loss_1)
-                epoch_critic_losses.append(critic_loss_1)
-                epoch_entropy_values.append(entropy_1)
+            # Update actor 1 and critic 1
+            actor_loss_1, critic_loss_1, entropy_1 = update_ppo(
+                actor_1, critic_1,
+                actor_1_optimizer, critic_1_optimizer,
+                rollout_buffer_1,
+                advantages_1[:, :, 1],
+                returns_1[:, :, 1],
+                config,
+                team_id=1
+            )
+            epoch_actor_losses.append(actor_loss_1)
+            epoch_critic_losses.append(critic_loss_1)
+            epoch_entropy_values.append(entropy_1)
 
         # Track metrics
         reward_history.append(np.mean(episode_rewards[:, 0]))  # Track team 0 only
@@ -1105,10 +1011,17 @@ def train_mappo(config: MAPPOConfig):
             mean_reward = np.mean(episode_rewards[:, 0])  # Team 0 mean
             elapsed = (time.time() - start_time) / 60
             log_msg = f"[{elapsed:.2f} min] Step {global_step} | Mean Reward {mean_reward:.2f}"
-            if config.use_baseline_opponent:
-                log_msg += " | Opponent: Baseline"
+            
+            # Show opponent type and selfplay ratio
+            if config.anneal_selfplay_ratio:
+                log_msg += f" | SP Ratio {current_selfplay_ratio:.2f}"
+            
+            if use_baseline:
+                log_msg += " | Opp: Baseline"
             elif use_opponent and current_opponent:
-                log_msg += f" | Opponent ELO {current_opponent.elo_rating:.1f}"
+                log_msg += f" | Opp: Pool (ELO {current_opponent.elo_rating:.1f})"
+            else:
+                log_msg += " | Opp: Self"
             
             # Add IL statistics if available
             if config.use_il_reward and il_info:
@@ -1116,7 +1029,7 @@ def train_mappo(config: MAPPOConfig):
                 il_agreement = (il_info.get("team_0_il_agreement_rate", 0) + 
                                il_info.get("team_1_il_agreement_rate", 0)) / 2
                 il_weight = il_info.get("team_0_il_weight", 0)
-                log_msg += f" | IL Agree {il_agreement:.2%} | IL Î» {il_weight:.3f}"
+                log_msg += f" | IL Agree {il_agreement:.2%} | IL ÃŽÂ» {il_weight:.3f}"
             
             print(log_msg)
         
@@ -1255,7 +1168,7 @@ def train_mappo(config: MAPPOConfig):
         axes[3].legend(loc='upper left')
     
     plt.tight_layout()
-    plot_filename = f'mappo_{timestamp}.png'
+    plot_filename = f'{timestamp}.png'
     plt.savefig(plot_filename, dpi=150, bbox_inches='tight')
     print(f"Training plots saved to {plot_filename}")
     plt.close()
@@ -1452,6 +1365,13 @@ if __name__ == "__main__":
     parser.add_argument("--num-eval-opponents", type=int, default=5, help="Number of opponents for evaluation")
     parser.add_argument("--max-pool-size", type=int, default=20, help="Max opponent pool size")
     parser.add_argument("--elo-k-factor", type=float, default=32.0, help="ELO K-factor")
+    
+    # Hybrid training
+    parser.add_argument("--anneal-selfplay-ratio", action="store_true", help="Enable annealing from baseline to self-play")
+    parser.add_argument("--selfplay-ratio-start", type=float, default=0.0, help="Starting selfplay ratio (0.0 = 100%% baseline)")
+    parser.add_argument("--selfplay-ratio-end", type=float, default=1.0, help="Ending selfplay ratio (1.0 = 100%% self-play)")
+    parser.add_argument("--selfplay-ratio-anneal-steps", type=int, default=1_000_000, help="Steps to complete annealing")
+    
     parser.add_argument("--snapshot-freq", type=int, default=100_000, help="Snapshot save frequency (steps)")
     parser.add_argument("--eval-freq", type=int, default=50_000, help="Evaluation frequency (steps)")
     parser.add_argument("--log-freq", type=int, default=1000, help="Log frequency (steps)")
@@ -1490,6 +1410,11 @@ if __name__ == "__main__":
         num_eval_opponents=args.num_eval_opponents,
         max_pool_size=args.max_pool_size,
         elo_k_factor=args.elo_k_factor,
+        # Hybrid training 
+        anneal_selfplay_ratio=args.anneal_selfplay_ratio,
+        selfplay_ratio_start=args.selfplay_ratio_start,
+        selfplay_ratio_end=args.selfplay_ratio_end,
+        selfplay_ratio_anneal_steps=args.selfplay_ratio_anneal_steps,
         snapshot_freq=args.snapshot_freq,
         eval_freq=args.eval_freq,
         log_freq=args.log_freq,
