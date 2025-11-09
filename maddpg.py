@@ -874,11 +874,14 @@ def train_maddpg(config: MADDPGConfig):
         
         # Logging
         if global_step % config.log_freq == 0:
-            # Use completed episode returns if available, otherwise current accumulation
+            #  Use completed episode returns if available, otherwise current accumulation
             if len(completed_returns_0) > 0:
                 mean_reward = np.mean(list(completed_returns_0))
-            else: 
-                mean_reward = 0
+                num_episodes = len(completed_returns_0)
+            else:
+                # Fallback to current accumulation if no episodes completed yet
+                mean_reward = np.mean(episode_rewards[:, 0])
+                num_episodes = 0
 
             reward_history.append(mean_reward) # Tracking
 
