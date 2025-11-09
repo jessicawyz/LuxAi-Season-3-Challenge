@@ -27,7 +27,8 @@ class LuxRewardShaper:
         unit_loss_penalty: float = -1.0,
         survival_reward: float = 0.05,
         exploration_reward: float = 0.1,
-        relic_discovery_reward: float = 2.0,
+        relic_discovery_reward: float = 5.0,
+        on_relic_bonus: float = 0.1,
         
         # IL reward shaping
         il_reward_shaper = None,  # Optional ILRewardShaper instance
@@ -43,6 +44,7 @@ class LuxRewardShaper:
             survival_reward: Small constant reward per step
             exploration_reward: Reward for exploring new tiles
             relic_discovery_reward: Reward for discovering new relic nodes
+            on_relic_bonus: Bonus per unit standing on relic tiles per step
             il_reward_shaper: Optional ILRewardShaper for imitation learning rewards
         """
         
@@ -61,6 +63,7 @@ class LuxRewardShaper:
         self.survival_reward = survival_reward
         self.exploration_reward = exploration_reward
         self.relic_discovery_reward = relic_discovery_reward
+        self.on_relic_bonus = on_relic_bonus
         
         # State tracking for dense rewards
         self.prev_state = None
@@ -202,6 +205,25 @@ class LuxRewardShaper:
             new_relics = max(0, next_relics - curr_relics)
             reward += new_relics * self.relic_discovery_reward
         
+        # On-relic bonus
+        if self.on_relic_bonus != 0 and match_steps > 0:
+            # Count units on relic tiles in next_obs
+            unit_positions = np.array(next_obs["units"]["position"][team_id])
+            unit_mask = np.array(next_obs["units_mask"][team_id])
+            relic_weights = np.array(next_obs["relic_nodes_map_weights"])
+            
+            units_on_relics = 0
+            for i, is_active in enumerate(unit_mask):
+                if is_active:
+                    x, y = unit_positions[i]
+                    if 0 <= x < relic_weights.shape[0] and 0 <= y < relic_weights.shape[1]:
+                        if relic_weights[x, y] > 0:
+                            units_on_relics += 1
+            
+            reward += units_on_relics * self.on_relic_bonus
+        
+        return reward
+
         return reward
     
     def _compute_total_energy(self, obs: Dict, team_id: int) -> float:
