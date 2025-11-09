@@ -207,18 +207,32 @@ class LuxRewardShaper:
         
         # On-relic bonus
         if self.on_relic_bonus != 0 and match_steps > 0:
-            # Count units on relic tiles in next_obs
+            # Count units near visible relic nodes
             unit_positions = np.array(next_obs["units"]["position"][team_id])
             unit_mask = np.array(next_obs["units_mask"][team_id])
-            relic_weights = np.array(next_obs["relic_nodes_map_weights"])
+            relic_positions = np.array(next_obs["relic_nodes"])
+            relic_mask = np.array(next_obs["relic_nodes_mask"])
             
             units_on_relics = 0
+            relic_config_radius = 2  # 5x5 config has radius of 2
+            
             for i, is_active in enumerate(unit_mask):
                 if is_active:
-                    x, y = unit_positions[i]
-                    if 0 <= x < relic_weights.shape[0] and 0 <= y < relic_weights.shape[1]:
-                        if relic_weights[x, y] > 0:
-                            units_on_relics += 1
+                    ux, uy = unit_positions[i]
+                    
+                    # Check if unit is near any visible relic
+                    for j, relic_visible in enumerate(relic_mask):
+                        if relic_visible:
+                            rx, ry = relic_positions[j]
+                            if rx >= 0 and ry >= 0:
+                                # Manhattan distance to relic center
+                                dx = abs(ux - rx)
+                                dy = abs(uy - ry)
+                                
+                                # Within relic config area (5x5 grid)
+                                if dx <= relic_config_radius and dy <= relic_config_radius:
+                                    units_on_relics += 1
+                                    break  # Count each unit only once
             
             reward += units_on_relics * self.on_relic_bonus
         
