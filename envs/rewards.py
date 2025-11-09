@@ -204,9 +204,9 @@ class LuxRewardShaper:
             if match_steps <= 200:
                 exploration_scale = 1.0
             else:
-                # Exponential decay: goes from 1.0 at step 200 to ~0.01 at step 500
-                progress = (match_steps - 200) / 300  # 0 to 1
-                exploration_scale = np.exp(-5 * progress)  # e^(-5x)
+                # Exponential decay
+                progress = (match_steps - 200) / 300
+                exploration_scale = np.exp(-5 * progress)
             
             reward += new_tiles * self.exploration_reward * exploration_scale
         
