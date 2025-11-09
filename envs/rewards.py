@@ -191,12 +191,24 @@ class LuxRewardShaper:
         if match_steps > 0:  # Match is ongoing
             reward += self.survival_reward
         
-        # Exploration reward 
+        # Exploration reward (decays with match progress)
         if self.exploration_reward != 0:
             curr_visible = np.sum(obs["sensor_mask"])
             next_visible = np.sum(next_obs["sensor_mask"])
             new_tiles = max(0, next_visible - curr_visible)
-            reward += new_tiles * self.exploration_reward
+            
+            # Decay exploration reward based on match progress
+            # Early match (0-200 steps): full exploration reward
+            # Mid-Late match (200-500 steps): exponentially decay to 0
+            match_steps = next_obs.get("match_steps", 0)
+            if match_steps <= 200:
+                exploration_scale = 1.0
+            else:
+                # Exponential decay: goes from 1.0 at step 200 to ~0.01 at step 500
+                progress = (match_steps - 200) / 300  # 0 to 1
+                exploration_scale = np.exp(-5 * progress)  # e^(-5x)
+            
+            reward += new_tiles * self.exploration_reward * exploration_scale
         
         # Relic discovery reward
         if self.relic_discovery_reward != 0:
