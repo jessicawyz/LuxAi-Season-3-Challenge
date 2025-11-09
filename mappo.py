@@ -505,7 +505,66 @@ class RolloutBuffer:
             advantages[:, :, team_id] = team_advantages
             returns[:, :, team_id] = team_returns
         
+        # Pre-flatten observations to avoid repeated construction
+        self._flatten_observations()
+        self._flatten_actions_and_probs()
+        
         return advantages, returns
+    
+    def _flatten_observations(self):
+        """
+        Flatten observations from (n_steps, num_envs) to (n_steps*num_envs) 
+        """
+        if hasattr(self, 'observations_flat'):
+            return  # Already flattened
+        
+        n_steps = len(self.observations)
+        if n_steps == 0:
+            return
+        
+        num_envs = self.observations[0]["team_0"]["spatial_features"].shape[0]
+        
+        # Pre-allocate flattened storage
+        self.observations_flat = {}
+        
+        # Flatten each key (team_0, team_1, global)
+        for key in self.observations[0].keys():
+            self.observations_flat[key] = {}
+            
+            # Get all feature keys from first observation
+            feat_keys = self.observations[0][key].keys()
+            
+            for feat_key in feat_keys:
+                # Stack all steps
+                stacked = torch.stack([self.observations[step][key][feat_key] 
+                                     for step in range(n_steps)])
+                
+                # Flatten first two dimensions
+                flat_shape = (n_steps * num_envs,) + stacked.shape[2:]
+                self.observations_flat[key][feat_key] = stacked.reshape(flat_shape)
+    
+    def _flatten_actions_and_probs(self):
+        """Flatten actions, log_probs, and values for efficient indexing"""
+        if hasattr(self, 'actions_flat'):
+            return  # Already flattened
+        
+        n_steps = len(self.actions)
+        num_envs = self.actions[0]["player_0"].shape[0]
+        
+        # Flatten actions
+        self.actions_flat = {}
+        for player_key in ["player_0", "player_1"]:
+            stacked = torch.stack([self.actions[step][player_key] for step in range(n_steps)])
+            flat_shape = (n_steps * num_envs,) + stacked.shape[2:]
+            self.actions_flat[player_key] = stacked.reshape(flat_shape)
+        
+        # Flatten log_probs
+        log_probs_stacked = torch.stack(self.log_probs)  # (n_steps, num_envs, 2)
+        self.log_probs_flat = log_probs_stacked.reshape(n_steps * num_envs, 2)
+        
+        # Flatten values  
+        values_stacked = torch.stack(self.values)  # (n_steps, num_envs, 2)
+        self.values_flat = values_stacked.reshape(n_steps * num_envs, 2)
     
     def _compute_gae(
         self,
@@ -1229,14 +1288,12 @@ def update_ppo(
         batch_step_indices = batch_indices // num_envs
         batch_env_indices = batch_indices % num_envs
         
-        # Reconstruct observations for batch
+        # Use pre-flattened observations
         batch_obs = {}
-        for key in rollout_buffer.observations[0].keys():
+        for key in rollout_buffer.observations_flat.keys():
             batch_obs[key] = {}
-            for feat_key in rollout_buffer.observations[0][key].keys():
-                feat_list = [rollout_buffer.observations[step][key][feat_key][env_idx]
-                           for step, env_idx in zip(batch_step_indices, batch_env_indices)]
-                batch_obs[key][feat_key] = torch.stack(feat_list)
+            for feat_key in rollout_buffer.observations_flat[key].keys():
+                batch_obs[key][feat_key] = rollout_buffer.observations_flat[key][feat_key][batch_indices]
         
         # Get batch actions
         if team_id == 0:
@@ -1246,15 +1303,9 @@ def update_ppo(
             player_key = "player_1"
             team_key = "team_1"
         
-        batch_actions = torch.stack([
-            rollout_buffer.actions[step][player_key][env_idx]
-            for step, env_idx in zip(batch_step_indices, batch_env_indices)
-        ])
-        
-        batch_old_log_probs = torch.stack([
-            rollout_buffer.log_probs[step][env_idx, team_id]
-            for step, env_idx in zip(batch_step_indices, batch_env_indices)
-        ])
+        # Use pre-flattened actions and log_probs
+        batch_actions = rollout_buffer.actions_flat[player_key][batch_indices]
+        batch_old_log_probs = rollout_buffer.log_probs_flat[batch_indices, team_id]
         
         batch_advantages = advantages_flat[batch_indices]
         batch_returns = returns_flat[batch_indices]
@@ -1304,10 +1355,8 @@ def update_ppo(
         
         # Value loss
         if config.clip_range_vf is not None:
-            batch_old_values = torch.stack([
-                rollout_buffer.values[step][env_idx, team_id]
-                for step, env_idx in zip(batch_step_indices, batch_env_indices)
-            ])
+            # Use pre-flattened values
+            batch_old_values = rollout_buffer.values_flat[batch_indices, team_id]
             values_clipped = batch_old_values + torch.clamp(
                 new_values - batch_old_values,
                 -config.clip_range_vf,
