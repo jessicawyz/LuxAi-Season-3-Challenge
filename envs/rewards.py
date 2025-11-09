@@ -21,7 +21,7 @@ class LuxRewardShaper:
         episode_win_bonus: float = 50.0,
         
         # Dense reward weights
-        relic_point_reward: float = 1.0,
+        relic_point_reward: float = 5.0,
         damage_dealt_reward: float = 0.01,
         energy_differential_reward: float = 0.001,
         unit_loss_penalty: float = -1.0,

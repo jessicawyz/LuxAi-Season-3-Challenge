@@ -1162,7 +1162,7 @@ def train_mappo(config: MAPPOConfig):
         axes[3].legend(loc='upper left')
     
     plt.tight_layout()
-    plot_filename = f'{timestamp}.png'
+    plot_filename = f'mappo_{timestamp}.png'
     plt.savefig(plot_filename, dpi=150, bbox_inches='tight')
     print(f"Training plots saved to {plot_filename}")
     plt.close()
