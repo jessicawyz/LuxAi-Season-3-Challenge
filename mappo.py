@@ -768,6 +768,11 @@ def train_mappo(config: MAPPOConfig):
     entropy_history = []
     
     start_time = time.time()
+
+    # Track last step for each frequency check
+    last_log_step = 0
+    last_eval_step = 0
+    last_snapshot_step = 0
     
     print("Starting MAPPO training...")
     
@@ -1061,7 +1066,7 @@ def train_mappo(config: MAPPOConfig):
         entropy_history.append(np.mean(epoch_entropy_values))
 
         # Logging
-        if global_step % config.log_freq == 0:
+        if global_step - last_log_step >= config.log_freq:
             mean_reward = np.mean(episode_rewards[:, 0])  # Team 0 mean
             elapsed = (time.time() - start_time) / 60
             log_msg = f"[{elapsed:.2f} min] Step {global_step} | Mean Reward {mean_reward:.2f}"
@@ -1084,10 +1089,11 @@ def train_mappo(config: MAPPOConfig):
                 il_weight = il_info.get("team_0_il_weight", 0)
                 log_msg += f" | IL Agree {il_agreement:.2%} | IL Lambda {il_weight:.3f}"
             
+            last_log_step = global_step
             print(log_msg)
         
         # Evaluation and checkpoint management
-        if global_step % config.eval_freq == 0 and global_step > 0:
+        if global_step - last_eval_step >= config.eval_freq and global_step > 0:
             print(f"\n{'='*60}")
             print(f"EVALUATION AT STEP {global_step}")
             print(f"{'='*60}")
@@ -1154,10 +1160,11 @@ def train_mappo(config: MAPPOConfig):
             else:
                 print("Skipping evaluation (no opponents in pool)")
             
+            last_eval_step = global_step
             print(f"{'='*60}\n")
         
         # Save snapshot checkpoints
-        if global_step % config.snapshot_freq == 0 and global_step > 0:
+        if global_step - last_snapshot_step >= config.snapshot_freq and global_step > 0:
             snapshot_path = os.path.join(config.checkpoint_dir, f"mappo_{global_step}.pt")
             checkpoint = {
                 "actor_0": actor_0.state_dict(),
@@ -1168,6 +1175,8 @@ def train_mappo(config: MAPPOConfig):
                 "config": config.__dict__,
             }
             torch.save(checkpoint, snapshot_path)
+
+            last_snapshot_step = global_step
             print(f"Saved snapshot checkpoint at step {global_step}")
     
     # Plot training metrics
