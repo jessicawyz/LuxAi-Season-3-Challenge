@@ -483,7 +483,7 @@ def create_selfplay_pool(
     pool.scan_checkpoint_dir(model_type=model_type)
     
     pool_state_path = os.path.join(checkpoint_dir, f"{model_type}_population.json")
-    pool.load_pool_state(pool_state_path)
+    # pool.load_pool_state(pool_state_path)
     
     return pool
 
