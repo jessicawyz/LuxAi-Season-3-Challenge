@@ -88,31 +88,58 @@ def evaluate_vs_opponent(
         step = 0
         while not done.all():
             with torch.no_grad():
-                # Agent: player_0
-                actions_0, _, _ = agent_actor_0(
-                    spatial_features=obs["team_0"]["spatial_features"],
-                    unit_features=obs["team_0"]["unit_features"],
-                    unit_mask=obs["team_0"]["unit_mask"],
-                    global_features=obs["team_0"]["global_features"],
-                    unit_energies=obs["team_0"]["unit_features"][:, :, 2] * 400,
-                    unit_positions=(obs["team_0"]["unit_features"][:, :, :2] *
-                                  torch.tensor([agent_config.map_width, agent_config.map_height], 
-                                              device=config.device)).long(),
-                    tile_types=obs["team_0"]["spatial_features"][:, 1] * 2
-                )
-                
-                # Opponent: player_1
-                actions_1, _, _ = opp_actor_1(
-                    spatial_features=obs["team_1"]["spatial_features"],
-                    unit_features=obs["team_1"]["unit_features"],
-                    unit_mask=obs["team_1"]["unit_mask"],
-                    global_features=obs["team_1"]["global_features"],
-                    unit_energies=obs["team_1"]["unit_features"][:, :, 2] * 400,
-                    unit_positions=(obs["team_1"]["unit_features"][:, :, :2] *
-                                  torch.tensor([opp_config.map_width, opp_config.map_height], 
-                                              device=config.device)).long(),
-                    tile_types=obs["team_1"]["spatial_features"][:, 1] * 2
-                )
+                try: 
+                    # Agent: player_0
+                    actions_0, _, _ = agent_actor_0(
+                        spatial_features=obs["team_0"]["spatial_features"],
+                        unit_features=obs["team_0"]["unit_features"],
+                        unit_mask=obs["team_0"]["unit_mask"],
+                        global_features=obs["team_0"]["global_features"],
+                        unit_energies=obs["team_0"]["unit_features"][:, :, 2] * 400,
+                        unit_positions=(obs["team_0"]["unit_features"][:, :, :2] *
+                                    torch.tensor([agent_config.map_width, agent_config.map_height], 
+                                                device=config.device)).long(),
+                        tile_types=obs["team_0"]["spatial_features"][:, 1] * 2
+                    )
+                    
+                    # Opponent: player_1
+                    actions_1, _, _ = opp_actor_1(
+                        spatial_features=obs["team_1"]["spatial_features"],
+                        unit_features=obs["team_1"]["unit_features"],
+                        unit_mask=obs["team_1"]["unit_mask"],
+                        global_features=obs["team_1"]["global_features"],
+                        unit_energies=obs["team_1"]["unit_features"][:, :, 2] * 400,
+                        unit_positions=(obs["team_1"]["unit_features"][:, :, :2] *
+                                    torch.tensor([opp_config.map_width, opp_config.map_height], 
+                                                device=config.device)).long(),
+                        tile_types=obs["team_1"]["spatial_features"][:, 1] * 2
+                    )
+                except:
+                    # Agent: player_0
+                    actions_0, _, _, _, _  = agent_actor_0(
+                        spatial_features=obs["team_0"]["spatial_features"],
+                        unit_features=obs["team_0"]["unit_features"],
+                        unit_mask=obs["team_0"]["unit_mask"],
+                        global_features=obs["team_0"]["global_features"],
+                        unit_energies=obs["team_0"]["unit_features"][:, :, 2] * 400,
+                        unit_positions=(obs["team_0"]["unit_features"][:, :, :2] *
+                                    torch.tensor([agent_config.map_width, agent_config.map_height], 
+                                                device=config.device)).long(),
+                        tile_types=obs["team_0"]["spatial_features"][:, 1] * 2
+                    )
+                    
+                    # Opponent: player_1
+                    actions_1, _, _, _, _  = opp_actor_1(
+                        spatial_features=obs["team_1"]["spatial_features"],
+                        unit_features=obs["team_1"]["unit_features"],
+                        unit_mask=obs["team_1"]["unit_mask"],
+                        global_features=obs["team_1"]["global_features"],
+                        unit_energies=obs["team_1"]["unit_features"][:, :, 2] * 400,
+                        unit_positions=(obs["team_1"]["unit_features"][:, :, :2] *
+                                    torch.tensor([opp_config.map_width, opp_config.map_height], 
+                                                device=config.device)).long(),
+                        tile_types=obs["team_1"]["spatial_features"][:, 1] * 2
+                    )
             
             # Step 
             obs, rewards, new_done, truncated, infos = env.step(
