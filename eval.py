@@ -17,21 +17,29 @@ class EvalConfig:
     deterministic: bool = True
 
 
-def load_maddpg_checkpoint(checkpoint_path: str, device: str):
-    from maddpg import MADDPGActor, MADDPGConfig
+
+def load_checkpoint(checkpoint_path: str, model_type: str, device: str):
+    if model_type == 'maddpg':
+        from maddpg import MADDPGActor as MARLActor
+        from maddpg import MADDPGConfig as MARLConfig
+    elif model_type == 'mappo':
+        from mappo import MAPPOActor as MARLActor
+        from mappo import MAPPOConfig as MARLConfig
+    else:
+        raise Exception("MARL algorithm not found.")
     
     # Load checkpoint    
     checkpoint = torch.load(checkpoint_path, map_location=device)
 
     if "config" in checkpoint:
         config_dict = checkpoint["config"]
-        config = MADDPGConfig(**config_dict)
+        config = MARLConfig(**config_dict)
     else:
-        config = MADDPGConfig()
+        config = MARLConfig()
     
     # Create actors
-    actor_0 = MADDPGActor(config).to(device)
-    actor_1 = MADDPGActor(config).to(device)
+    actor_0 = MARLActor(config).to(device)
+    actor_1 = MARLActor(config).to(device)
     
     # Load weights
     actor_0.load_state_dict(checkpoint["actor_0"])
@@ -41,14 +49,6 @@ def load_maddpg_checkpoint(checkpoint_path: str, device: str):
     actor_1.eval()
     
     return actor_0, actor_1, config
-
-
-def load_checkpoint(checkpoint_path: str, model_type: str, device: str):
-    if model_type == "maddpg":
-        return load_maddpg_checkpoint(checkpoint_path, device)
-    else:
-        raise ValueError(f"Unknown model type: {model_type}")
-
 
 def evaluate_vs_opponent(
     agent_actors: Tuple,
