@@ -908,6 +908,11 @@ def train_mappo(config: MAPPOConfig):
             
             if config.use_il_reward and il_reward_shaper is not None:
                 try:
+                    if step == 0:
+                        for env_idx in range(config.num_envs):
+                            il_reward_shaper.reset(env_idx=env_idx)
+                        il_reward_shaper.il_wrapper._skipped_envs.clear()
+                        
                     # Extract raw observations from vectorized environment
                     if hasattr(env, 'prev_obs_raw') and env.prev_obs_raw is not None:
                         # Convert JAX observations to list of dicts per environment
