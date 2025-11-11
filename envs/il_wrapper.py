@@ -51,6 +51,8 @@ class ILWrapper:
         self.model = torch.jit.load(model_path, map_location=device)
         self.model.eval()
         print(f"[IL Wrapper] IL model loaded successfully")
+
+        self._initialize_global_params()
         
         # State objects per environment (per team)
         # states[env_idx][team_id] = State object
@@ -88,6 +90,53 @@ class ILWrapper:
         
         # Track environments where State sync failed (to avoid spam warnings)
         self._skipped_envs = set()
+    
+    def _initialize_global_params(self):
+        """
+        Initialize Global parameters that IL agent's State/Space code expects.
+        These must be set before creating State objects.
+        """
+        # Set default values for Global parameters
+        # These will be updated with actual game params in predict()
+        
+        # Obstacle movement direction - set to None initially
+        if not hasattr(Global, 'OBSTACLE_MOVEMENT_DIRECTION'):
+            Global.OBSTACLE_MOVEMENT_DIRECTION = None
+            Global.OBSTACLE_MOVEMENT_DIRECTION_FOUND = False
+        
+        # Other Global parameters that might be needed
+        if not hasattr(Global, 'MAX_UNIT_ENERGY'):
+            Global.MAX_UNIT_ENERGY = 400
+        
+        if not hasattr(Global, 'UNIT_MOVE_COST'):
+            Global.UNIT_MOVE_COST = 1
+        
+        if not hasattr(Global, 'UNIT_SAP_COST'):
+            Global.UNIT_SAP_COST = 10
+        
+        if not hasattr(Global, 'UNIT_SAP_RANGE'):
+            Global.UNIT_SAP_RANGE = 4
+        
+        if not hasattr(Global, 'UNIT_SENSOR_RANGE'):
+            Global.UNIT_SENSOR_RANGE = 7
+        
+        if not hasattr(Global, 'MAX_STEPS_IN_MATCH'):
+            Global.MAX_STEPS_IN_MATCH = 500
+        
+        if not hasattr(Global, 'NUM_MATCHES_IN_GAME'):
+            Global.NUM_MATCHES_IN_GAME = 3
+        
+        if not hasattr(Global, 'UNIT_SAP_DROPOFF_FACTOR'):
+            Global.UNIT_SAP_DROPOFF_FACTOR = 0.5
+            Global.UNIT_SAP_DROPOFF_FACTOR_FOUND = False
+        
+        if not hasattr(Global, 'RELIC_RESULTS'):
+            Global.RELIC_RESULTS = []
+        
+        if not hasattr(Global, 'NEBULA_VISION_REDUCTION_OPTIONS'):
+            Global.NEBULA_VISION_REDUCTION_OPTIONS = []
+        
+        print(f"[IL Wrapper] Initialized Global parameters")
     
     def reset(self, env_idx: Optional[int] = None):
         """Reset state for specific environment or all environments"""

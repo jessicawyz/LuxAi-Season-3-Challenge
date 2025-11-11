@@ -976,7 +976,7 @@ def train_mappo(config: MAPPOConfig):
             if config.use_il_reward and il_reward_shaper is not None:
                 for i in range(config.num_envs):
                     rewards[i][0] += il_rewards_0[0].item()  # Team 0
-                    rewards[i][1] += il_rewards_0[1].item()  # Team 1
+                    rewards[i][1] += il_rewards_1[0].item()  # Team 1
             
             # Store in buffers
             values = torch.stack([values_0, values_1], dim=1) 
