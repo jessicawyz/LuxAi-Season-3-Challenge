@@ -965,7 +965,7 @@ def train_mappo(config: MAPPOConfig):
                             il_info = {}
                             il_info.update({f"team_0_{k}": v for k, v in il_i0.items()})
                             il_info.update({f"team_1_{k}": v for k, v in il_i1.items()})
-                
+                        
                 except Exception as e:
                     if step == 0:  # Only print once
                         print(f"Warning: IL reward computation failed: {e}")
