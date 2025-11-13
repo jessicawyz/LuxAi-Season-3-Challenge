@@ -211,8 +211,8 @@ class ILWrapper:
                     units_position[t].append([-1, -1])
         
         state_obs = {
-            "steps": int(obs.get('steps')),  # Use State's own step counter, not env step
-            "match_steps": int(obs.get('match_steps')),
+            "steps": state.global_step, 
+            "match_steps": state.match_step,
             "team_wins": [int(obs["team_wins"][0]), int(obs["team_wins"][1])],
             "team_points": [int(obs["team_points"][0]), int(obs["team_points"][1])],
             "sensor_mask": sensor_mask,
